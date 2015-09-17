@@ -10,12 +10,12 @@ env:
     #- TOXENV=py26
     #- TOXENV=py27
     #- TOXENV=py34
-addons:
-  apt:
-    sources:
-      - deadsnakes
-    packages:
-      - python2.4
+#addons:
+#  apt:
+#    sources:
+#      - deadsnakes
+#    packages:
+#      - python2.4
 before_install:
   - docker pull ubuntu:12.04
 install:
@@ -29,7 +29,7 @@ script:
 - |
   if [ -n $DOCKERFILE ]; then 
       cd $TRAVIS_BUILD_DIR
-      docker run --name ansible_test -t -v $PWD:/ansible ansible/ubuntu:latest /bin/bash -c 'cd /ansible/ && pwd && ls -al && source ./hacking/env-setup && cd /ansible/test/integration && make non_destructive && make destructive'
+      docker run --name ansible_test -t -v $PWD:/ansible ansible/ubuntu:latest /bin/bash -c 'cd /ansible/ && pwd && ls -al && source ./hacking/env-setup && cd /ansible/test/integration && make non_destructive && sudo make destructive'
   fi
 #- make non_destructive
 after_success:
