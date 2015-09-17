@@ -3,13 +3,13 @@ services:
   - docker
 language: python
 env:
-  global:
-    - DOCKERFILE=test/integration/Dockerfile.ubuntu
+#  global:
   matrix:
-    - TOKENV=py24
-    - TOXENV=py26
-    - TOXENV=py27
-    - TOXENV=py34
+    - DOCKERFILE=test/integration/Dockerfile.ubuntu
+    #- TOKENV=py24
+    #- TOXENV=py26
+    #- TOXENV=py27
+    #- TOXENV=py34
 addons:
   apt:
     sources:
