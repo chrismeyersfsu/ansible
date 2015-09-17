@@ -29,6 +29,7 @@ script:
 - |
   if [ -n $DOCKERFILE ]; then 
       cd $TRAVIS_BUILD_DIR
+      export CREDENTIALS_FILE=""
       docker run --name ansible_test -t -v $PWD:/ansible ansible/ubuntu:latest /bin/bash -c 'cd /ansible/ && source ./hacking/env-setup && cd /ansible/test/integration && make non_destructive && make destructive'
   fi
 #- make non_destructive
