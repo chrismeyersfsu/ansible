@@ -13,7 +13,7 @@ addons:
     packages:
       - python2.4
 before_install:
-  - docker pull ubuntu:12.04
+  - docker pull ubuntu:14.04
 install:
   - pip install tox PyYAML Jinja2 sphinx
 script:
