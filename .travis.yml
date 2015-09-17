@@ -1,4 +1,6 @@
 sudo: required
+services:
+  - docker
 language: python
 env:
   - DOCKERFILE=test/integration/Dockerfile.ubuntu
