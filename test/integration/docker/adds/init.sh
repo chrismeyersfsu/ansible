@@ -1,6 +1,11 @@
 #!/bin/bash
 set -ev
 
+(sleep 5) &
+CHILD_PID=$!
+kill -n 15 $CHILD_PID # sigterm
+
+: <<'end_long_comment'
 /usr/sbin/sshd -D &
 cd /ansible/
 source ./hacking/env-setup
@@ -15,4 +20,6 @@ echo "Shell pid $BASHPID"
 echo "Subshell pid $BASHPID"
 make non_destructive
 ) #&& make destructive
+end_long_comment
+
 
