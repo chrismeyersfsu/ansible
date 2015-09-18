@@ -135,7 +135,10 @@ class PlaybookCLI(CLI):
         # create the playbook executor, which manages running the plays via a task queue manager
         pbex = PlaybookExecutor(playbooks=self.args, inventory=inventory, variable_manager=variable_manager, loader=loader, display=self.display, options=self.options, passwords=passwords)
 
-        results = pbex.run()
+        try:
+            results = pbex.run()
+        except OSError as e:
+            print("Errno: %s stderr: %s" % (e.errno, e.strerror))
 
         if isinstance(results, list):
             for p in results:
