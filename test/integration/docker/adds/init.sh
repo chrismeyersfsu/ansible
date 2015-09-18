@@ -9,5 +9,5 @@ cd /ansible/test/integration
 #export TEST_FLAGS="-vvvvv --skip-tags \"test_synchronize\""
 export TEST_FLAGS="-vvvvv --tags \"test_copy\""
 export CREDENTIALS_FILE=""
-make non_destructive && make destructive
+make non_destructive #&& make destructive
 
