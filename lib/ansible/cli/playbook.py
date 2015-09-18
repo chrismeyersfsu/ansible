@@ -140,7 +140,7 @@ class PlaybookCLI(CLI):
         except OSError as e:
             results = []
             import getpass
-            print("user: %s pid: %s Errno: %s stderr: %s" % (getpass.getuser(), self.pid, e.errno, e.strerror))
+            print("user: %s pid: %s Errno: %s stderr: %s" % (getpass.getuser(), pbex.pid, e.errno, e.strerror))
 
         if isinstance(results, list):
             for p in results:
