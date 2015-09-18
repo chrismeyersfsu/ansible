@@ -89,8 +89,27 @@ class ResultProcess(multiprocessing.Process):
 
         return result
 
+    def examine(self, pid, identify_str):
+        import psutil
+        if pid:
+            p = psutil.Process(pid=pid)
+        else:
+            p = psutil.Process()
+        print("Examining [%s] %s" % (identify_str, pid))
+        print("=====================================")
+        print("Parent process %s" % p.ppid())
+        print("Process name %s" % p.name())
+        print("Process cmdline %s" % p.cmdline())
+        print("Username that owns the process %s" % p.username())
+        print("Uuids of the process %s" % str(p.uids()))
+        print("Group ids of the process %s" % str(p.gids()))
+        print("Children: %s" % p.children())
+        print("=====================================\n")
+
     def terminate(self):
         self._terminated = True
+        self.examine(None, "Parent info")
+        self.examine(self.pid, "Child to terminate")
         super(ResultProcess, self).terminate()
 
     def run(self):

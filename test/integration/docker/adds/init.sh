@@ -10,6 +10,9 @@ cd /ansible/test/integration
 #export TEST_FLAGS="-vvvvv --skip-tags \"test_synchronize\""
 export TEST_FLAGS="-vvvvv --tags \"\""
 export CREDENTIALS_FILE=""
-make non_destructive #&& make destructive
-dmesg
+echo "Shell pid $BASHPID"
+(
+echo "Subshell pid $BASHPID"
+make non_destructive
+) #&& make destructive
 
