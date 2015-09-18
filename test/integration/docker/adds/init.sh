@@ -1,4 +1,5 @@
 #!/bin/bash
+set -v
 
 /usr/sbin/sshd -D &
 cd /ansible/
