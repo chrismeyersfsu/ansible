@@ -1,5 +1,5 @@
 #!/bin/bash
-set -v
+set -ev
 
 /usr/sbin/sshd -D &
 cd /ansible/
