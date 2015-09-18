@@ -141,6 +141,7 @@ class PlaybookCLI(CLI):
             results = []
             import getpass
             print("user: %s Errno: %s stderr: %s" % (getpass.getuser(), e.errno, e.strerror))
+            raise
 
         if isinstance(results, list):
             for p in results:
