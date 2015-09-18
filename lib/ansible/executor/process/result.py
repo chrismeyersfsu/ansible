@@ -110,6 +110,10 @@ class ResultProcess(multiprocessing.Process):
         self._terminated = True
         self.examine(None, "Parent info")
         self.examine(self.pid, "Child to terminate")
+        import psutil
+        import signal
+        psutil.Process(pid=self.pid).send_signal(signal.SIGTERM)
+        
         super(ResultProcess, self).terminate()
 
     def run(self):
