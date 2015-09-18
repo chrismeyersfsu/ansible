@@ -138,7 +138,8 @@ class PlaybookCLI(CLI):
         try:
             results = pbex.run()
         except OSError as e:
-            print("Errno: %s stderr: %s" % (e.errno, e.strerror))
+            results = []
+            print("pid: %s Errno: %s stderr: %s" % (self.pid, e.errno, e.strerror))
 
         if isinstance(results, list):
             for p in results:
