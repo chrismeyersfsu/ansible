@@ -3,7 +3,7 @@ set -ev
 
 (sleep 5) &
 CHILD_PID=$!
-kill -n 15 $CHILD_PID # sigterm
+sudo kill -n 15 $CHILD_PID # sigterm
 
 : <<'end_long_comment'
 /usr/sbin/sshd -D &
