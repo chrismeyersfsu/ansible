@@ -25,7 +25,7 @@ script:
 #- if test x"$TOKENV" != x'py24' ; then  tox ; fi
 #- if test x"$TOKENV" = x'py24' ; then python2.4 -V && python2.4 -m compileall -fq -x 'module_utils/(a10|rax|openstack|ec2|gce).py' lib/ansible/module_utils ; fi
   #- make -C docsite all
-- cd $DOCKER_ROOT && cp $DOCKER_FILE Dockerfile && build -t ansible/ubuntu:latest .
+- cd $DOCKER_ROOT && cp $DOCKER_FILE Dockerfile && docker build -t ansible/ubuntu:latest .
 - |
   if [ -n $DOCKER_FILE ]; then 
       cd $TRAVIS_BUILD_DIR
