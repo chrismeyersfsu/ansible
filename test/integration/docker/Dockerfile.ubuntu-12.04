@@ -22,4 +22,5 @@ ADD adds/init.sh /init.sh
 
 EXPOSE 22
 
-CMD /init.sh
+CMD ["/init.sh"]
+
