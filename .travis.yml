@@ -29,8 +29,7 @@ script:
 - |
   if [ -n $DOCKER_FILE ]; then 
       cd $TRAVIS_BUILD_DIR
-      export CREDENTIALS_FILE=""
-      docker run --name ansible_test -t -v $PWD:/ansible ansible/ubuntu:12.04
+      docker run --privileged=true --name ansible_test -i -t -v $PWD:/ansible ansible/ubuntu:12.04 /ansible/test/integration/docker/init.sh
   fi
 after_success:
   - coveralls
