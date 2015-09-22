@@ -17,7 +17,7 @@ RUN mkdir ~/ansible_testing
 # Ansible tests rely on .deb cache hanging around
 RUN rm /etc/apt/apt.conf.d/docker-clean
 
-EXPOSE 22
+EXPOSE 22 3306 5432
 
 CMD ["/bin/bash"]
 
