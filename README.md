@@ -36,22 +36,4 @@ Get Involved
    * All code submissions are done through pull requests.  Take care to make sure no merge commits are in the submission, and use `git rebase` vs `git merge` for this reason.  If submitting a large code change (other than modules), it's probably a good idea to join ansible-devel and talk about what you would like to do or add first and to avoid duplicate efforts.  This not only helps everyone know what's going on, it also helps save time and effort if we decide some changes are needed.
    * Users list: [ansible-project](http://groups.google.com/group/ansible-project)
    * Development list: [ansible-devel](http://groups.google.com/group/ansible-devel)
-   * Announcement list: [ansible-announce](http://groups.google.com/group/ansible-announce) - read only
-   * irc.freenode.net: #ansible
-
-Branch Info
-===========
-
-   * Releases are named after Led Zeppelin songs. (Releases prior to 2.0 were named after Van Halen songs.)
-   * The devel branch corresponds to the release actively under development.
-   * As of 1.8, modules are kept in different repos, you'll want to follow [core](https://github.com/ansible/ansible-modules-core) and [extras](https://github.com/ansible/ansible-modules-extras)
-   * Various release-X.Y branches exist for previous releases.
-   * We'd love to have your contributions, read [Community Information](http://docs.ansible.com/community.html) for notes on how to get started.
-
-Authors
-=======
-
-Ansible was created by [Michael DeHaan](https://github.com/mpdehaan) (michael.dehaan/gmail/com) and has contributions from over 1000 users (and growing).  Thanks everyone!
-
-Ansible is sponsored by [Ansible, Inc](http://ansible.com)
-
+  
