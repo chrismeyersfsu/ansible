@@ -19,26 +19,25 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
+import collections
 import itertools
 import operator
 import uuid
 
 from functools import partial
 from inspect import getmembers
-from io import FileIO
 
-from six import iteritems, string_types, text_type
+from ansible.compat.six import iteritems, string_types, text_type
 
 from jinja2.exceptions import UndefinedError
 
 from ansible.errors import AnsibleParserError
-from ansible.parsing import DataLoader
+from ansible.parsing.dataloader import DataLoader
 from ansible.playbook.attribute import Attribute, FieldAttribute
-from ansible.template import Templar
 from ansible.utils.boolean import boolean
-from ansible.utils.debug import debug
 from ansible.utils.vars import combine_vars, isidentifier
-from ansible.template import template
+
+BASE_ATTRIBUTES = {}
 
 class Base:
 
@@ -53,6 +52,9 @@ class Base:
     # flags and misc. settings
     _environment         = FieldAttribute(isa='list')
     _no_log              = FieldAttribute(isa='bool')
+    _always_run           = FieldAttribute(isa='bool')
+    _run_once             = FieldAttribute(isa='bool')
+    _ignore_errors        = FieldAttribute(isa='bool')
 
     # param names which have been deprecated/removed
     DEPRECATED_ATTRIBUTES = [
@@ -123,12 +125,19 @@ class Base:
         Returns the list of attributes for this class (or any subclass thereof).
         If the attribute name starts with an underscore, it is removed
         '''
+
+        # check cache before retrieving attributes
+        if self.__class__ in BASE_ATTRIBUTES:
+            return BASE_ATTRIBUTES[self.__class__]
+
+        # Cache init
         base_attributes = dict()
         for (name, value) in getmembers(self.__class__):
             if isinstance(value, Attribute):
                if name.startswith('_'):
                    name = name[1:]
                base_attributes[name] = value
+        BASE_ATTRIBUTES[self.__class__] = base_attributes
         return base_attributes
 
     def _initialize_base_attributes(self):
@@ -183,8 +192,6 @@ class Base:
 
         # Walk all attributes in the class. We sort them based on their priority
         # so that certain fields can be loaded before others, if they are dependent.
-        # FIXME: we currently don't do anything with private attributes but
-        #        may later decide to filter them out of 'ds' here.
         base_attributes = self._get_base_attributes()
         for name, attr in sorted(base_attributes.items(), key=operator.itemgetter(1)):
             # copy the value over unless a _load_field method is defined
@@ -249,7 +256,13 @@ class Base:
         new_me = self.__class__()
 
         for name in self._get_base_attributes():
-            setattr(new_me, name, getattr(self, name))
+            attr_val = getattr(self, name)
+            if isinstance(attr_val, collections.Sequence):
+                setattr(new_me, name, attr_val[:])
+            elif isinstance(attr_val, collections.Mapping):
+                setattr(new_me, name, attr_val.copy())
+            else:
+                setattr(new_me, name, attr_val)
 
         new_me._loader           = self._loader
         new_me._variable_manager = self._variable_manager
@@ -438,7 +451,7 @@ class Base:
             new_value = [ new_value ]
 
         #return list(set(value + new_value))
-        return [i for i,_ in itertools.groupby(value + new_value)]
+        return [i for i,_ in itertools.groupby(value + new_value) if i is not None]
 
     def __getstate__(self):
         return self.serialize()

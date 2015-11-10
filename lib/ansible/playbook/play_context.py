@@ -26,8 +26,7 @@ import random
 import re
 import string
 
-from six import iteritems, string_types
-
+from ansible.compat.six import iteritems, string_types
 from ansible import constants as C
 from ansible.errors import AnsibleError
 from ansible.playbook.attribute import Attribute, FieldAttribute
@@ -326,7 +325,7 @@ class PlayContext(Base):
                 if address_var in delegated_vars:
                     break
             else:
-                display.warning("no remote address found for delegated host %s, using its name by default" % delegated_host_name)
+                display.debug("no remote address found for delegated host %s\nusing its name, so success depends on DNS resolution" % delegated_host_name)
                 delegated_vars['ansible_host'] = delegated_host_name
         else:
             delegated_vars = dict()
@@ -358,9 +357,11 @@ class PlayContext(Base):
                 if connection_type in delegated_vars:
                     break
             else:
-                if new_info.remote_addr in C.LOCALHOST:
+                remote_addr_local  = new_info.remote_addr in C.LOCALHOST
+                inv_hostname_local = delegated_vars.get('inventory_hostname') in C.LOCALHOST
+                if remote_addr_local and inv_hostname_local:
                     setattr(new_info, 'connection', 'local')
-                elif getattr(new_info, 'connection', None) == 'local' and new_info.remote_addr not in C.LOCALHOST:
+                elif getattr(new_info, 'connection', None) == 'local' and (not remote_addr_local or not inv_hostname_local):
                     setattr(new_info, 'connection', C.DEFAULT_TRANSPORT)
 
         # set no_log to default if it was not previouslly set
@@ -412,9 +413,9 @@ class PlayContext(Base):
                 # force quick error if password is required but not supplied, should prevent sudo hangs.
                 if self.become_pass:
                     prompt = '[sudo via ansible, key=%s] password: ' % randbits
-                    becomecmd = '%s %s -p "%s" -S -u %s %s -c %s' % (exe, flags, prompt, self.become_user, executable, success_cmd)
+                    becomecmd = '%s %s -p "%s" -u %s %s -c %s' % (exe,  flags.replace('-n',''), prompt, self.become_user, executable, success_cmd)
                 else:
-                    becomecmd = '%s %s -n -S -u %s %s -c %s' % (exe, flags, self.become_user, executable, success_cmd)
+                    becomecmd = '%s %s -u %s %s -c %s' % (exe, flags, self.become_user, executable, success_cmd)
 
 
             elif self.become_method == 'su':
@@ -471,7 +472,8 @@ class PlayContext(Base):
         In case users need to access from the play, this is a legacy from runner.
         '''
 
-        #FIXME: remove password? possibly add become/sudo settings
+        # TODO: should we be setting the more generic values here rather than
+        #       the more specific _ssh_ ones?
         for special_var in  ['ansible_connection', 'ansible_ssh_host', 'ansible_ssh_pass', 'ansible_ssh_port', 'ansible_ssh_user', 'ansible_ssh_private_key_file', 'ansible_ssh_pipelining']:
             if special_var not in variables:
                 for prop, varnames in MAGIC_VARIABLE_MAPPING.items():

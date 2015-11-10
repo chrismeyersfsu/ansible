@@ -27,8 +27,9 @@ import random
 import stat
 import tempfile
 import time
+from abc import ABCMeta, abstractmethod
 
-from six import binary_type, text_type, iteritems
+from ansible.compat.six import binary_type, text_type, iteritems, with_metaclass
 
 from ansible import constants as C
 from ansible.errors import AnsibleError, AnsibleConnectionFailure
@@ -42,7 +43,7 @@ except ImportError:
     from ansible.utils.display import Display
     display = Display()
 
-class ActionBase:
+class ActionBase(with_metaclass(ABCMeta, object)):
 
     '''
     This class is the base class for all action plugins, and defines
@@ -62,11 +63,39 @@ class ActionBase:
 
         self._supports_check_mode = True
 
-    def _configure_module(self, module_name, module_args, task_vars=dict()):
+    @abstractmethod
+    def run(self, tmp=None, task_vars=None):
+        """ Action Plugins should implement this method to perform their
+        tasks.  Everything else in this base class is a helper method for the
+        action plugin to do that.
+
+        :kwarg tmp: Temporary directory.  Sometimes an action plugin sets up
+            a temporary directory and then calls another module.  This parameter
+            allows us to reuse the same directory for both.
+        :kwarg task_vars: The variables (host vars, group vars, config vars,
+            etc) associated with this task.
+        :returns: dictionary of results from the module
+
+        Implementors of action modules may find the following variables especially useful:
+
+        * Module parameters.  These are stored in self._task.args
+        """
+        # store the module invocation details into the results
+        results =  {}
+        if self._task.async == 0:
+            results['invocation'] = dict(
+                module_name = self._task.action,
+                module_args = self._task.args,
+            )
+        return results
+
+    def _configure_module(self, module_name, module_args, task_vars=None):
         '''
         Handles the loading and templating of the module code through the
         modify_module() function.
         '''
+        if task_vars is None:
+            task_vars = dict()
 
         # Search module path(s) for named module.
         for mod_type in self._connection.module_implementation_preferences:
@@ -88,12 +117,10 @@ class ActionBase:
             module_path = self._shared_loader_obj.module_loader.find_plugin(module_name, mod_type)
             if module_path:
                 break
-        else: # This is a for-else: http://bit.ly/1ElPkyg
-            # FIXME: Why is it necessary to look for the windows version?
-            # Shouldn't all modules be installed?
-            #
+        else:
             # Use Windows version of ping module to check module paths when
-            # using a connection that supports .ps1 suffixes.
+            # using a connection that supports .ps1 suffixes. We check specifically
+            # for win_ping here, otherwise the code would look for ping.ps1
             if '.ps1' in self._connection.module_implementation_preferences:
                 ping_module = 'win_ping'
             else:
@@ -127,7 +154,7 @@ class ActionBase:
                     continue
                 if not isinstance(environment, dict):
                     raise AnsibleError("environment must be a dictionary, received %s (%s)" % (environment, type(environment)))
-                # very deliberatly using update here instead of combine_vars, as
+                # very deliberately using update here instead of combine_vars, as
                 # these environment settings should not need to merge sub-dicts
                 final_environment.update(environment)
 
@@ -138,8 +165,6 @@ class ActionBase:
         Determines if a temp path should be created before the action is executed.
         '''
 
-        # FIXME: modified from original, needs testing? Since this is now inside
-        #        the action plugin, it should make it just this simple
         return getattr(self, 'TRANSFERS_FILES', False)
 
     def _late_needs_tmp_path(self, tmp, module_style):
@@ -158,8 +183,6 @@ class ActionBase:
             return True
         return False
 
-    # FIXME: return a datastructure in this function instead of raising errors -
-    #        the new executor pipeline handles it much better that way
     def _make_tmp_path(self):
         '''
         Create and return a temporary path on a remote box.
@@ -199,8 +222,6 @@ class ActionBase:
                 output = output + u": %s" % result['stdout']
             raise AnsibleConnectionFailure(output)
 
-        # FIXME: do we still need to do this?
-        #rc = self._connection._shell.join_path(utils.last_non_blank_line(result['stdout']).strip(), '')
         rc = self._connection._shell.join_path(result['stdout'].strip(), u'').splitlines()[-1]
 
         # Catch failure conditions, files should never be
@@ -329,10 +350,12 @@ class ActionBase:
 
         return data[idx:]
 
-    def _execute_module(self, module_name=None, module_args=None, tmp=None, task_vars=dict(), persist_files=False, delete_remote_tmp=True):
+    def _execute_module(self, module_name=None, module_args=None, tmp=None, task_vars=None, persist_files=False, delete_remote_tmp=True):
         '''
         Transfer and run a module along with its arguments.
         '''
+        if task_vars is None:
+            task_vars = dict()
 
         # if a module name was not specified for this execution, use
         # the action from the task
@@ -440,13 +463,6 @@ class ActionBase:
         # isn't already a stdout_lines value there
         if 'stdout' in data and 'stdout_lines' not in data:
             data['stdout_lines'] = data.get('stdout', u'').splitlines()
-
-        # store the module invocation details back into the result
-        if self._task.async != 0:
-            data['invocation'] = dict(
-                module_args = module_args,
-                module_name = module_name,
-            )
 
         self._display.debug("done with _execute_module (%s, %s)" % (module_name, module_args))
         return data

@@ -19,7 +19,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from six import iteritems, text_type
+from ansible.compat.six import iteritems, text_type
 
 from ansible.errors import AnsibleError
 from ansible.executor.play_iterator import PlayIterator
@@ -173,9 +173,11 @@ class StrategyModule(StrategyBase):
                     if not task:
                         continue
 
+                    if self._tqm._terminated:
+                        break
+
                     run_once = False
                     work_to_do = True
-
 
                     # test to see if the task across all hosts points to an action plugin which
                     # sets BYPASS_HOST_LOOP to true, or if it has run_once enabled. If so, we
@@ -212,7 +214,7 @@ class StrategyModule(StrategyBase):
 
                         self._display.debug("getting variables")
                         task_vars = self._variable_manager.get_vars(loader=self._loader, play=iterator._play, host=host, task=task)
-                        task_vars = self.add_tqm_variables(task_vars, play=iterator._play)
+                        self.add_tqm_variables(task_vars, play=iterator._play)
                         templar = Templar(loader=self._loader, variables=task_vars)
                         self._display.debug("done getting variables")
 
@@ -275,25 +277,29 @@ class StrategyModule(StrategyBase):
                         # list of noop tasks, to make sure that they continue running in lock-step
                         try:
                             new_blocks = self._load_included_file(included_file, iterator=iterator)
+
+                            for new_block in new_blocks:
+                                noop_block = Block(parent_block=task._block)
+                                noop_block.block  = [noop_task for t in new_block.block]
+                                noop_block.always = [noop_task for t in new_block.always]
+                                noop_block.rescue = [noop_task for t in new_block.rescue]
+                                for host in hosts_left:
+                                    if host in included_file._hosts:
+                                        task_vars = self._variable_manager.get_vars(loader=self._loader, play=iterator._play, host=host, task=included_file._task)
+                                        final_block = new_block.filter_tagged_tasks(play_context, task_vars)
+                                        all_blocks[host].append(final_block)
+                                    else:
+                                        all_blocks[host].append(noop_block)
+
                         except AnsibleError as e:
                             for host in included_file._hosts:
+                                self._tqm._failed_hosts[host.name] = True
                                 iterator.mark_host_failed(host)
-                            self._display.warning(str(e))
+                            self._display.error(e, wrap_text=False)
                             continue
 
-                        for new_block in new_blocks:
-                            noop_block = Block(parent_block=task._block)
-                            noop_block.block  = [noop_task for t in new_block.block]
-                            noop_block.always = [noop_task for t in new_block.always]
-                            noop_block.rescue = [noop_task for t in new_block.rescue]
-                            for host in hosts_left:
-                                if host in included_file._hosts:
-                                    task_vars = self._variable_manager.get_vars(loader=self._loader, play=iterator._play, host=host, task=included_file._task)
-                                    final_block = new_block.filter_tagged_tasks(play_context, task_vars)
-                                    all_blocks[host].append(final_block)
-                                else:
-                                    all_blocks[host].append(noop_block)
-
+                    # finally go through all of the hosts and append the
+                    # accumulated blocks to their list of tasks
                     for host in hosts_left:
                         iterator.add_tasks(host, all_blocks[host])
 

@@ -19,7 +19,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from six import string_types
+from ansible.compat.six import string_types
 
 import os
 import shutil
@@ -40,10 +40,18 @@ VALID_SPEC_KEYS = [
     'version',
 ]
 
+try:
+    from __main__ import display
+    display = display
+except ImportError:
+    from ansible.utils.display import Display
+    display = Display()
+
 class RoleRequirement(RoleDefinition):
 
     """
-    FIXME: document various ways role specs can be specified
+    Helper class for Galaxy, which is used to parse both dependencies
+    specified in meta/main.yml and requirements.yml files.
     """
 
     def __init__(self):
@@ -76,6 +84,8 @@ class RoleRequirement(RoleDefinition):
         #   'version': 'v1.0',
         #   'name': 'repo'
         # }
+
+        display.deprecated("The comma separated role spec format, use the yaml/explicit format instead.")
 
         default_role_versions = dict(git='master', hg='tip')
 
@@ -140,17 +150,19 @@ class RoleRequirement(RoleDefinition):
             role = RoleRequirement.role_spec_parse(role['role'])
         else:
             role = role.copy()
-            # New style: { src: 'galaxy.role,version,name', other_vars: "here" }
-            if 'github.com' in role["src"] and 'http' in role["src"] and '+' not in role["src"] and not role["src"].endswith('.tar.gz'):
-                role["src"] = "git+" + role["src"]
 
-            if '+' in role["src"]:
-                (scm, src) = role["src"].split('+')
-                role["scm"] = scm
-                role["src"] = src
+            if 'src'in role:
+                # New style: { src: 'galaxy.role,version,name', other_vars: "here" }
+                if 'github.com' in role["src"] and 'http' in role["src"] and '+' not in role["src"] and not role["src"].endswith('.tar.gz'):
+                    role["src"] = "git+" + role["src"]
 
-            if 'name' not in role:
-                role["name"] = RoleRequirement.repo_url_to_role_name(role["src"])
+                if '+' in role["src"]:
+                    (scm, src) = role["src"].split('+')
+                    role["scm"] = scm
+                    role["src"] = src
+
+                if 'name' not in role:
+                    role["name"] = RoleRequirement.repo_url_to_role_name(role["src"])
 
             if 'version' not in role:
                 role['version'] = ''

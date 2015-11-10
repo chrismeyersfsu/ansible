@@ -21,11 +21,11 @@ __metaclass__ = type
 
 import fnmatch
 
-from six import iteritems
+from ansible.compat.six import iteritems
 
 from ansible import constants as C
 
-from ansible.errors import *
+from ansible.errors import AnsibleError
 from ansible.playbook.block import Block
 from ansible.playbook.task import Task
 
@@ -132,7 +132,8 @@ class PlayIterator:
                      (s, task) = self.get_next_task_for_host(host, peek=True)
                      if s.run_state == self.ITERATING_COMPLETE:
                          break
-                     if task.name == play_context.start_at_task or fnmatch.fnmatch(task.name, play_context.start_at_task):
+                     if task.name == play_context.start_at_task or fnmatch.fnmatch(task.name, play_context.start_at_task) or \
+                        task.get_name() == play_context.start_at_task or fnmatch.fnmatch(task.get_name(), play_context.start_at_task):
                          # we have our match, so clear the start_at_task field on the
                          # play context to flag that we've started at a task (and future
                          # plays won't try to advance)
@@ -395,6 +396,9 @@ class PlayIterator:
         return None
 
     def _insert_tasks_into_state(self, state, task_list):
+        if state.fail_state != self.FAILED_NONE:
+            return state
+
         if state.run_state == self.ITERATING_TASKS:
             if state.tasks_child_state:
                 state.tasks_child_state = self._insert_tasks_into_state(state.tasks_child_state, task_list)

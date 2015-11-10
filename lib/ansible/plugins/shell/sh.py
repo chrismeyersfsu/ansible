@@ -24,7 +24,7 @@ import ansible.constants as C
 import time
 import random
 
-from six import text_type
+from ansible.compat.six import text_type
 
 _USER_HOME_PATH_RE = re.compile(r'^~[_.A-Za-z0-9][-_.A-Za-z0-9]*$')
 
@@ -38,7 +38,7 @@ class ShellModule(object):
         '''Build command prefix with environment variables.'''
         env = dict(
             LANG        = C.DEFAULT_MODULE_LANG,
-            LC_CTYPE    = C.DEFAULT_MODULE_LANG,
+            LC_ALL      = C.DEFAULT_MODULE_LANG,
             LC_MESSAGES = C.DEFAULT_MODULE_LANG,
         )
         env.update(kwargs)
@@ -67,8 +67,8 @@ class ShellModule(object):
         basetmp = self.join_path(C.DEFAULT_REMOTE_TMP, basefile)
         if system and (basetmp.startswith('$HOME') or basetmp.startswith('~/')):
             basetmp = self.join_path('/tmp', basefile)
-        cmd = 'mkdir -p "$(echo %s)"' % basetmp
-        cmd += ' && echo "$(echo %s)"' % basetmp
+        cmd = 'mkdir -p "`echo %s`"' % basetmp
+        cmd += ' && echo "`echo %s`"' % basetmp
 
         # change the umask in a subshell to achieve the desired mode
         # also for directories created with `mkdir -p`

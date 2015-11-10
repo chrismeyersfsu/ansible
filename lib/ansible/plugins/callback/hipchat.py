@@ -15,6 +15,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+# Make coding more python3-ish
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
 import os
 import urllib
 
@@ -42,8 +46,9 @@ class CallbackModule(CallbackBase):
 
     """
     CALLBACK_VERSION = 2.0
-    CALLBACK_VERSION = 2.0
+    CALLBACK_TYPE = 'notification'
     CALLBACK_NAME = 'hipchat'
+    CALLBACK_NEEDS_WHITELIST = True
 
     def __init__(self, display):
 

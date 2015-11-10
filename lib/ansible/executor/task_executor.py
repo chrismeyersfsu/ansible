@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 
-from six import iteritems
+from ansible.compat.six import iteritems, string_types
 
 from ansible import constants as C
 from ansible.errors import AnsibleError, AnsibleParserError, AnsibleUndefinedVariable, AnsibleConnectionFailure
@@ -156,7 +156,8 @@ class TaskExecutor:
         # create a copy of the job vars here so that we can modify
         # them temporarily without changing them too early for other
         # parts of the code that might still need a pristine version
-        vars_copy = self._job_vars.copy()
+        #vars_copy = self._job_vars.copy()
+        vars_copy = self._job_vars
 
         # now we update them with the play context vars
         self._play_context.update_vars(vars_copy)
@@ -166,14 +167,21 @@ class TaskExecutor:
         if self._task.loop:
             if self._task.loop in self._shared_loader_obj.lookup_loader:
                 #TODO: remove convert_bare true and deprecate this in with_ 
-                try:
-                    loop_terms = listify_lookup_plugin_terms(terms=self._task.loop_args, templar=templar, loader=self._loader, fail_on_undefined=True, convert_bare=True)
-                except AnsibleUndefinedVariable as e:
-                    if 'has no attribute' in str(e):
-                        loop_terms = []
-                        self._display.deprecated("Skipping task due to undefined attribute, in the future this will be a fatal error.")
-                    else:
-                        raise
+                if self._task.loop == 'first_found':
+                    # first_found loops are special.  If the item is undefined
+                    # then we want to fall through to the next value rather
+                    # than failing.
+                    loop_terms = listify_lookup_plugin_terms(terms=self._task.loop_args, templar=templar, loader=self._loader, fail_on_undefined=False, convert_bare=True)
+                    loop_terms = [t for t in loop_terms if not templar._contains_vars(t)]
+                else:
+                    try:
+                        loop_terms = listify_lookup_plugin_terms(terms=self._task.loop_args, templar=templar, loader=self._loader, fail_on_undefined=True, convert_bare=True)
+                    except AnsibleUndefinedVariable as e:
+                        if 'has no attribute' in str(e):
+                            loop_terms = []
+                            self._display.deprecated("Skipping task due to undefined attribute, in the future this will be a fatal error.")
+                        else:
+                            raise
                 items = self._shared_loader_obj.lookup_loader.get(self._task.loop, loader=self._loader, templar=templar).run(terms=loop_terms, variables=vars_copy)
             else:
                 raise AnsibleError("Unexpected failure in finding the lookup named '%s' in the available lookup plugins" % self._task.loop)
@@ -196,7 +204,8 @@ class TaskExecutor:
 
         # make copies of the job vars and task so we can add the item to
         # the variables and re-validate the task with the item variable
-        task_vars = self._job_vars.copy()
+        #task_vars = self._job_vars.copy()
+        task_vars = self._job_vars
 
         items = self._squash_items(items, task_vars)
         for item in items:
@@ -229,23 +238,40 @@ class TaskExecutor:
         Squash items down to a comma-separated list for certain modules which support it
         (typically package management modules).
         '''
-        if len(items) > 0 and self._task.action in self.SQUASH_ACTIONS:
-            final_items = []
-            name = self._task.args.pop('name', None) or self._task.args.pop('pkg', None)
-            for item in items:
-                variables['item'] = item
-                templar = Templar(loader=self._loader, shared_loader_obj=self._shared_loader_obj, variables=variables)
-                if self._task.evaluate_conditional(templar, variables):
-                    if templar._contains_vars(name):
-                        new_item = templar.template(name)
-                        final_items.append(new_item)
-                    else:
-                        final_items.append(item)
-            joined_items = ",".join(final_items)
-            self._task.args['name'] = joined_items
-            return [joined_items]
-        else:
-            return items
+        # _task.action could contain templatable strings (via action: and
+        # local_action:)  Template it before comparing.  If we don't end up
+        # optimizing it here, the templatable string might use template vars
+        # that aren't available until later (it could even use vars from the
+        # with_items loop) so don't make the templated string permanent yet.
+        templar = Templar(loader=self._loader, shared_loader_obj=self._shared_loader_obj, variables=variables)
+        task_action = self._task.action
+        if templar._contains_vars(task_action):
+            task_action = templar.template(task_action, fail_on_undefined=False)
+
+        if len(items) > 0 and task_action in self.SQUASH_ACTIONS:
+            if all(isinstance(o, string_types) for o in items):
+                final_items = []
+                name = self._task.args.pop('name', None) or self._task.args.pop('pkg', None)
+                for item in items:
+                    variables['item'] = item
+                    if self._task.evaluate_conditional(templar, variables):
+                        if templar._contains_vars(name):
+                            new_item = templar.template(name, cache=False)
+                            final_items.append(new_item)
+                        else:
+                            final_items.append(item)
+                self._task.args['name'] = final_items
+                return [final_items]
+            #elif:
+                # Right now we only optimize single entries.  In the future we
+                # could optimize more types:
+                # * lists can be squashed together
+                # * dicts could squash entries that match in all cases except the
+                #   name or pkg field.
+                # Note: we really should be checking that the name or pkg field
+                # contains a template that expands with our with_items values.
+                # If it doesn't then we may break things
+        return items
 
     def _execute(self, variables=None):
         '''
@@ -259,34 +285,54 @@ class TaskExecutor:
 
         templar = Templar(loader=self._loader, shared_loader_obj=self._shared_loader_obj, variables=variables)
 
-        # apply the given task's information to the connection info,
-        # which may override some fields already set by the play or
-        # the options specified on the command line
-        self._play_context = self._play_context.set_task_and_variable_override(task=self._task, variables=variables, templar=templar)
+        context_validation_error = None
+        try:
+            # apply the given task's information to the connection info,
+            # which may override some fields already set by the play or
+            # the options specified on the command line
+            self._play_context = self._play_context.set_task_and_variable_override(task=self._task, variables=variables, templar=templar)
 
-        # fields set from the play/task may be based on variables, so we have to
-        # do the same kind of post validation step on it here before we use it.
-        # We also add "magic" variables back into the variables dict to make sure
-        # a certain subset of variables exist.
-        self._play_context.update_vars(variables)
-        self._play_context.post_validate(templar=templar)
+            # fields set from the play/task may be based on variables, so we have to
+            # do the same kind of post validation step on it here before we use it.
+            self._play_context.post_validate(templar=templar)
+
+            # We also add "magic" variables back into the variables dict to make sure
+            # a certain subset of variables exist.
+            self._play_context.update_vars(variables)
+        except AnsibleError as e:
+            # save the error, which we'll raise later if we don't end up
+            # skipping this task during the conditional evaluation step
+            context_validation_error = e
 
         # Evaluate the conditional (if any) for this task, which we do before running
         # the final task post-validation. We do this before the post validation due to
         # the fact that the conditional may specify that the task be skipped due to a
         # variable not being present which would otherwise cause validation to fail
-        if not self._task.evaluate_conditional(templar, variables):
-            self._display.debug("when evaulation failed, skipping this task")
-            return dict(changed=False, skipped=True, skip_reason='Conditional check failed', _ansible_no_log=self._play_context.no_log)
+        try:
+            if not self._task.evaluate_conditional(templar, variables):
+                self._display.debug("when evaluation failed, skipping this task")
+                return dict(changed=False, skipped=True, skip_reason='Conditional check failed', _ansible_no_log=self._play_context.no_log)
+        except AnsibleError:
+            # skip conditional exception in the case of includes as the vars needed might not be avaiable except in the included tasks or due to tags
+            if self._task.action != 'include':
+                raise
+
+        # if we ran into an error while setting up the PlayContext, raise it now
+        if context_validation_error is not None:
+            raise context_validation_error
+
+        # if this task is a TaskInclude, we just return now with a success code so the
+        # main thread can expand the task list for the given host
+        if self._task.action == 'include':
+            include_variables = self._task.args.copy()
+            include_file = include_variables.pop('_raw_params', None)
+            if not include_file:
+                return dict(failed=True, msg="No include file was specified to the include")
+
+            include_file = templar.template(include_file)
+            return dict(include=include_file, include_variables=include_variables)
 
         # Now we do final validation on the task, which sets all fields to their final values.
-        # In the case of debug tasks, we save any 'var' params and restore them after validating
-        # so that variables are not replaced too early.
-        prev_var = None
-        if self._task.action == 'debug' and 'var' in self._task.args:
-            prev_var = self._task.args.pop('var')
-
-        original_args = self._task.args.copy()
         self._task.post_validate(templar=templar)
         if '_variable_params' in self._task.args:
             variable_params = self._task.args.pop('_variable_params')
@@ -294,17 +340,6 @@ class TaskExecutor:
                 self._display.deprecated("Using variables for task params is unsafe, especially if the variables come from an external source like facts")
                 variable_params.update(self._task.args)
                 self._task.args = variable_params
-
-        if prev_var is not None:
-            self._task.args['var'] = prev_var
-
-        # if this task is a TaskInclude, we just return now with a success code so the
-        # main thread can expand the task list for the given host
-        if self._task.action == 'include':
-            include_variables = original_args
-            include_file = include_variables.get('_raw_params')
-            del include_variables['_raw_params']
-            return dict(include=include_file, include_variables=include_variables)
 
         # get the connection and the handler for this execution
         self._connection = self._get_connection(variables=variables, templar=templar)
@@ -318,8 +353,11 @@ class TaskExecutor:
             self._task.args = dict((i[0], i[1]) for i in iteritems(self._task.args) if i[1] != omit_token)
 
         # Read some values from the task, so that we can modify them if need be
-        retries = self._task.retries
-        if retries <= 0:
+        if self._task.until is not None:
+            retries = self._task.retries
+            if retries <= 0:
+                retries = 1
+        else:
             retries = 1
 
         delay = self._task.delay
@@ -328,13 +366,13 @@ class TaskExecutor:
 
         # make a copy of the job vars here, in case we need to update them
         # with the registered variable value later on when testing conditions
-        vars_copy = variables.copy()
+        #vars_copy = variables.copy()
+        vars_copy = variables
 
         self._display.debug("starting attempt loop")
         result = None
         for attempt in range(retries):
             if attempt > 0:
-                # FIXME: this should use the self._display.callback/message passing mechanism
                 self._display.display("FAILED - RETRYING: %s (%d retries left). Result was: %s" % (self._task, retries-attempt, result), color="red")
                 result['attempts'] = attempt + 1
 
@@ -359,7 +397,7 @@ class TaskExecutor:
             # update the local copy of vars with the registered value, if specified,
             # or any facts which may have been generated by the module execution
             if self._task.register:
-                vars_copy[self._task.register] = result 
+                vars_copy[self._task.register] = result
 
             if 'ansible_facts' in result:
                 vars_copy.update(result['ansible_facts'])
@@ -406,6 +444,12 @@ class TaskExecutor:
         # do the final update of the local variables here, for both registered
         # values and any facts which may have been created
         if self._task.register:
+            ### FIXME:
+            # If we remove invocation, we should also be removing _ansible*
+            # and maybe ansible_facts.
+            # Remove invocation from registered vars
+            #if 'invocation' in result:
+            #    del result['invocation']
             variables[self._task.register] = result
 
         if 'ansible_facts' in result:
@@ -416,6 +460,17 @@ class TaskExecutor:
         # may be item-specific, ie. "notify: service {{item}}"
         if self._task.notify is not None:
             result['_ansible_notify'] = self._task.notify
+
+        # add the delegated vars to the result, so we can reference them
+        # on the results side without having to do any further templating
+        # FIXME: we only want a limited set of variables here, so this is currently
+        #        hardcoded but should be possibly fixed if we want more or if
+        #        there is another source of truth we can use
+        delegated_vars = variables.get('ansible_delegated_vars', dict()).get(self._task.delegate_to, dict()).copy()
+        if len(delegated_vars) > 0:
+            result["_ansible_delegated_vars"] = dict()
+            for k in ('ansible_host', ):
+                result["_ansible_delegated_vars"][k] = delegated_vars.get(k)
 
         # preserve no_log setting
         result["_ansible_no_log"] = self._play_context.no_log
@@ -473,8 +528,6 @@ class TaskExecutor:
         correct connection object from the list of connection plugins
         '''
 
-        # FIXME: calculation of connection params/auth stuff should be done here
-
         if not self._play_context.remote_addr:
             self._play_context.remote_addr = self._host.address
 
@@ -486,7 +539,7 @@ class TaskExecutor:
                     del variables[i]
             # now replace the interpreter values with those that may have come
             # from the delegated-to host
-            delegated_vars = variables.get('ansible_delegated_vars', dict()).get(self._host.name, dict())
+            delegated_vars = variables.get('ansible_delegated_vars', dict()).get(self._task.delegate_to, dict())
             if isinstance(delegated_vars, dict):
                 for i in delegated_vars:
                     if i.startswith("ansible_") and i.endswith("_interpreter"):

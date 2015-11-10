@@ -18,7 +18,9 @@
 import os
 import sys
 import stat
+import time
 import array
+import shlex
 import errno
 import fcntl
 import fnmatch
@@ -53,6 +55,13 @@ try:
         raise ImportError
 except ImportError:
     import simplejson as json
+
+# The distutils module is not shipped with SUNWPython on Solaris.
+# It's in the SUNWPython-devel package which also contains development files
+# that don't belong on production boxes.  Since our Solaris code doesn't
+# depend on LooseVersion, do not import it on Solaris.
+if platform.system() != 'SunOS':
+    from distutils.version import LooseVersion
 
 
 # --------------------------------------------------------------
@@ -133,6 +142,8 @@ class Facts(object):
                  { 'path' : '/usr/bin/emerge',      'name' : 'portage' },
                  { 'path' : '/usr/sbin/pkgadd',     'name' : 'svr4pkg' },
                  { 'path' : '/usr/bin/pkg',         'name' : 'pkg' },
+                 { 'path' : '/usr/bin/xbps-install','name' : 'xbps' },
+                 { 'path' : '/usr/local/sbin/pkg',  'name' : 'pkgng' },
     ]
 
     def __init__(self, load_on_init=True):
@@ -147,6 +158,7 @@ class Facts(object):
             self.get_selinux_facts()
             self.get_fips_facts()
             self.get_pkg_mgr_facts()
+            self.get_service_mgr_facts()
             self.get_lsb_facts()
             self.get_date_time_facts()
             self.get_user_facts()
@@ -225,13 +237,13 @@ class Facts(object):
             fact = 'loading %s' % fact_base
             try:
                 fact = json.loads(out)
-            except ValueError, e:
+            except ValueError:
                 # load raw ini
                 cp = ConfigParser.ConfigParser()
                 try:
                     cp.readfp(StringIO.StringIO(out))
-                except ConfigParser.Error, e:
-                    fact="error loading fact - please check content"
+                except ConfigParser.Error:
+                    fact = "error loading fact - please check content"
                 else:
                     fact = {}
                     #print cp.sections()
@@ -257,7 +269,7 @@ class Facts(object):
             SLC = 'RedHat', Ascendos = 'RedHat', CloudLinux = 'RedHat', PSBM = 'RedHat',
             OracleLinux = 'RedHat', OVS = 'RedHat', OEL = 'RedHat', Amazon = 'RedHat',
             XenServer = 'RedHat', Ubuntu = 'Debian', Debian = 'Debian', Raspbian = 'Debian', Slackware = 'Slackware', SLES = 'Suse',
-            SLED = 'Suse', openSUSE = 'Suse', SuSE = 'Suse', Gentoo = 'Gentoo', Funtoo = 'Gentoo',
+            SLED = 'Suse', openSUSE = 'Suse', SuSE = 'Suse', SLES_SAP = 'Suse', Gentoo = 'Gentoo', Funtoo = 'Gentoo',
             Archlinux = 'Archlinux', Manjaro = 'Archlinux', Mandriva = 'Mandrake', Mandrake = 'Mandrake',
             Solaris = 'Solaris', Nexenta = 'Solaris', OmniOS = 'Solaris', OpenIndiana = 'Solaris',
             SmartOS = 'Solaris', AIX = 'AIX', Alpine = 'Alpine', MacOSX = 'Darwin',
@@ -505,7 +517,7 @@ class Facts(object):
                         self.facts['cmdline'][item[0]] = True
                     else:
                         self.facts['cmdline'][item[0]] = item[1]
-            except ValueError, e:
+            except ValueError:
                 pass
 
     def get_public_ssh_host_keys(self):
@@ -530,6 +542,53 @@ class Facts(object):
                 self.facts['pkg_mgr'] = pkg['name']
         if self.facts['system'] == 'OpenBSD':
                 self.facts['pkg_mgr'] = 'openbsd_pkg'
+
+    def get_service_mgr_facts(self):
+        #TODO: detect more custom init setups like bootscripts, dmd, s6, etc
+        # also other OSs other than linux might need to check across several possible candidates
+
+        # try various forms of querying pid 1
+        proc_1 = get_file_content('/proc/1/comm')
+        if proc_1 is None:
+            rc, proc_1, err = module.run_command("ps -p 1 -o comm|tail -n 1", use_unsafe_shell=True)
+
+        if proc_1 in ['init', '/sbin/init']:
+            # many systems return init, so this cannot be trusted
+            proc_1 = None
+
+        # if not init/None it should be an identifiable or custom init, so we are done!
+        if proc_1 is not None:
+            self.facts['service_mgr'] = proc_1
+
+        # start with the easy ones
+        elif  self.facts['distribution'] == 'MacOSX':
+            #FIXME: find way to query executable, version matching is not ideal
+            if LooseVersion(platform.mac_ver()[0]) >= LooseVersion('10.4'):
+                self.facts['service_mgr'] = 'launchd'
+            else:
+                self.facts['service_mgr'] = 'systemstarter'
+        elif self.facts['system'].endswith('BSD') or self.facts['system'] in ['Bitrig', 'DragonFly']:
+            #FIXME: we might want to break out to individual BSDs
+            self.facts['service_mgr'] = 'bsdinit'
+        elif self.facts['system'] == 'AIX':
+            self.facts['service_mgr'] = 'src'
+        elif self.facts['system'] == 'SunOS':
+            #FIXME: smf?
+            self.facts['service_mgr'] = 'svcs'
+        elif self.facts['system'] == 'Linux':
+
+            if self._check_systemd():
+                self.facts['service_mgr'] = 'systemd'
+            elif module.get_bin_path('initctl') and os.path.exists("/etc/init/"):
+                self.facts['service_mgr'] = 'upstart'
+            elif module.get_bin_path('rc-service'):
+                self.facts['service_mgr'] = 'openrc'
+            elif os.path.exists('/etc/init.d/'):
+                self.facts['service_mgr'] = 'sysvinit'
+
+        if not self.facts.get('service_mgr', False):
+            # if we cannot detect, fallback to generic 'service'
+            self.facts['service_mgr'] = 'service'
 
     def get_lsb_facts(self):
         lsb_path = module.get_bin_path('lsb_release')
@@ -583,7 +642,7 @@ class Facts(object):
             self.facts['selinux']['status'] = 'enabled'
             try:
                 self.facts['selinux']['policyvers'] = selinux.security_policyvers()
-            except OSError, e:
+            except OSError:
                 self.facts['selinux']['policyvers'] = 'unknown'
             try:
                 (rc, configmode) = selinux.selinux_getenforcemode()
@@ -591,12 +650,12 @@ class Facts(object):
                     self.facts['selinux']['config_mode'] = Facts.SELINUX_MODE_DICT.get(configmode, 'unknown')
                 else:
                     self.facts['selinux']['config_mode'] = 'unknown'
-            except OSError, e:
+            except OSError:
                 self.facts['selinux']['config_mode'] = 'unknown'
             try:
                 mode = selinux.security_getenforce()
                 self.facts['selinux']['mode'] = Facts.SELINUX_MODE_DICT.get(mode, 'unknown')
-            except OSError, e:
+            except OSError:
                 self.facts['selinux']['mode'] = 'unknown'
             try:
                 (rc, policytype) = selinux.selinux_getpolicytype()
@@ -604,7 +663,7 @@ class Facts(object):
                     self.facts['selinux']['type'] = policytype
                 else:
                     self.facts['selinux']['type'] = 'unknown'
-            except OSError, e:
+            except OSError:
                 self.facts['selinux']['type'] = 'unknown'
 
 
@@ -640,6 +699,16 @@ class Facts(object):
         self.facts['date_time']['tz'] = time.strftime("%Z")
         self.facts['date_time']['tz_offset'] = time.strftime("%z")
 
+    def _check_systemd(self):
+        # tools must be installed
+        if module.get_bin_path('systemctl'):
+
+            # this should show if systemd is the boot init system, if checking init faild to mark as systemd
+            # these mirror systemd's own sd_boot test http://www.freedesktop.org/software/systemd/man/sd_booted.html
+            for canary in ["/run/systemd/system/", "/dev/.run/systemd/", "/dev/.systemd/"]:
+                if os.path.exists(canary):
+                    return True
+        return False
 
     # User
     def get_user_facts(self):
@@ -658,7 +727,7 @@ class Facts(object):
 
     def get_dns_facts(self):
         self.facts['dns'] = {}
-        for line in get_file_lines('/etc/resolv.conf'):
+        for line in get_file_content('/etc/resolv.conf', '').splitlines():
             if line.startswith('#') or line.startswith(';') or line.strip() == '':
                 continue
             tokens = line.split()
@@ -915,7 +984,7 @@ class LinuxHardware(Hardware):
                     if key == 'form_factor':
                         try:
                             self.facts['form_factor'] = FORM_FACTOR[int(data)]
-                        except IndexError, e:
+                        except IndexError:
                             self.facts['form_factor'] = 'unknown (%s)' % data
                     else:
                         self.facts[key] = data
@@ -966,7 +1035,7 @@ class LinuxHardware(Hardware):
                         statvfs_result = os.statvfs(fields[1])
                         size_total = statvfs_result.f_bsize * statvfs_result.f_blocks
                         size_available = statvfs_result.f_bsize * (statvfs_result.f_bavail)
-                    except OSError, e:
+                    except OSError:
                         continue
 
                     uuid = 'NA'
@@ -1433,6 +1502,8 @@ class FreeBSDHardware(Hardware):
             else:
                 self.facts[k] = 'NA'
 
+class DragonFlyHardware(FreeBSDHardware):
+    pass
 
 class NetBSDHardware(Hardware):
     """
@@ -2331,6 +2402,13 @@ class FreeBSDNetwork(GenericBsdIfconfigNetwork, Network):
     """
     platform = 'FreeBSD'
 
+class DragonFlyNetwork(GenericBsdIfconfigNetwork, Network):
+    """
+    This is the DragonFly Network Class.
+    It uses the GenericBsdIfconfigNetwork unchanged.
+    """
+    platform = 'DragonFly'
+
 class AIXNetwork(GenericBsdIfconfigNetwork, Network):
     """
     This is the AIX Network Class.
@@ -2753,6 +2831,9 @@ class FreeBSDVirtual(Virtual):
         self.facts['virtualization_type'] = ''
         self.facts['virtualization_role'] = ''
 
+class DragonFlyVirtual(FreeBSDVirtual):
+    pass
+
 class OpenBSDVirtual(Virtual):
     """
     This is a OpenBSD-specific subclass of Virtual.  It defines
@@ -2883,7 +2964,7 @@ class SunOSVirtual(Virtual):
                                 hostfeatures.append(arg[0])
                         if( len(hostfeatures) > 0 ):
                             self.facts['virtualization_role'] = 'host (' + ','.join(hostfeatures) + ')'
-            except ValueError, e:
+            except ValueError:
                 pass
 
 def get_file_content(path, default=None, strip=True):
@@ -2901,12 +2982,13 @@ def get_file_content(path, default=None, strip=True):
     return data
 
 def get_file_lines(path):
-    '''file.readlines() that closes the file'''
-    datafile = open(path)
-    try:
-        return datafile.readlines()
-    finally:
-        datafile.close()
+    '''get list of lines from file'''
+    data = get_file_content(path)
+    if data:
+        ret = data.splitlines()
+    else:
+        ret = []
+    return ret
 
 def ansible_facts(module):
     facts = {}

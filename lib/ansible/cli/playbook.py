@@ -18,6 +18,10 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
 ########################################################
+
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
 import os
 import stat
 
@@ -25,7 +29,7 @@ from ansible.cli import CLI
 from ansible.errors import AnsibleError, AnsibleOptionsError
 from ansible.executor.playbook_executor import PlaybookExecutor
 from ansible.inventory import Inventory
-from ansible.parsing import DataLoader
+from ansible.parsing.dataloader import DataLoader
 from ansible.utils.vars import load_extra_vars
 from ansible.vars import VariableManager
 
@@ -96,7 +100,7 @@ class PlaybookCLI(CLI):
             vault_pass = CLI.read_vault_password_file(self.options.vault_password_file, loader=loader)
             loader.set_vault_password(vault_pass)
         elif self.options.ask_vault_pass:
-            vault_pass = self.ask_vault_passwords(ask_vault_pass=True, ask_new_vault_pass=False, confirm_new=False)[0]
+            vault_pass = self.ask_vault_passwords()[0]
             loader.set_vault_password(vault_pass)
 
         # initial error check, to make sure all specified playbooks are accessible

@@ -19,10 +19,14 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from six.moves import queue as Queue
-from six import iteritems, text_type
+from ansible.compat.six.moves import queue as Queue
+from ansible.compat.six import iteritems, text_type, string_types
 
+import json
+import pickle
+import sys
 import time
+import zlib
 
 from jinja2.exceptions import UndefinedError
 
@@ -37,7 +41,7 @@ from ansible.playbook.included_file import IncludedFile
 from ansible.playbook.role import hash_params
 from ansible.plugins import action_loader, connection_loader, filter_loader, lookup_loader, module_loader, test_loader
 from ansible.template import Templar
-from ansible.vars.unsafe_proxy import wrap_var
+from ansible.vars.unsafe_proxy import wrap_var, AnsibleJSONUnsafeEncoder
 
 try:
     from __main__ import display
@@ -47,9 +51,9 @@ except ImportError:
 
 __all__ = ['StrategyBase']
 
-# FIXME: this should probably be in the plugins/__init__.py, with
-#        a smarter mechanism to set all of the attributes based on
-#        the loaders created there
+# TODO: this should probably be in the plugins/__init__.py, with
+#       a smarter mechanism to set all of the attributes based on
+#       the loaders created there
 class SharedPluginLoaderObj:
     '''
     A simple object to make pass the various plugin loaders to
@@ -127,11 +131,8 @@ class StrategyBase:
         Base class method to add extra variables/information to the list of task
         vars sent through the executor engine regarding the task queue manager state.
         '''
-
-        new_vars = vars.copy()
-        new_vars['ansible_current_hosts'] = self.get_hosts_remaining(play)
-        new_vars['ansible_failed_hosts'] = self.get_failed_hosts(play)
-        return new_vars
+        vars['ansible_current_hosts'] = [h.name for h in self.get_hosts_remaining(play)]
+        vars['ansible_failed_hosts'] = [h.name for h in self.get_failed_hosts(play)]
 
     def _queue_task(self, host, task, task_vars, play_context):
         ''' handles queueing the task up to be sent to a worker '''
@@ -152,7 +153,28 @@ class StrategyBase:
             # way to share them with the forked processes
             shared_loader_obj = SharedPluginLoaderObj()
 
-            main_q.put((host, task, self._loader.get_basedir(), task_vars, play_context, shared_loader_obj), block=False)
+            # compress (and convert) the data if so configured, which can
+            # help a lot when the variable dictionary is huge. We pop the
+            # hostvars out of the task variables right now, due to the fact
+            # that they're not JSON serializable
+            compressed_vars = False
+            hostvars = task_vars.pop('hostvars', None)
+            if C.DEFAULT_VAR_COMPRESSION_LEVEL > 0:
+                zip_vars = zlib.compress(json.dumps(task_vars), C.DEFAULT_VAR_COMPRESSION_LEVEL)
+                compressed_vars = True
+                # we're done with the original dict now, so delete it to
+                # try and reclaim some memory space, which is helpful if the
+                # data contained in the dict is very large
+                del task_vars
+            else:
+                zip_vars = task_vars
+
+            # and queue the task
+            main_q.put((host, task, self._loader.get_basedir(), zip_vars, hostvars, compressed_vars, play_context, shared_loader_obj), block=False)
+
+            # nuke the hostvars object too, as its no longer needed
+            del hostvars
+
             self._pending_results += 1
         except (EOFError, IOError, AssertionError) as e:
             # most likely an abort
@@ -199,10 +221,11 @@ class StrategyBase:
                         self._tqm._stats.increment('skipped', host.name)
                         self._tqm.send_callback('v2_runner_on_skipped', task_result)
                     elif result[0] == 'host_task_ok':
-                        self._tqm._stats.increment('ok', host.name)
-                        if 'changed' in task_result._result and task_result._result['changed']:
-                            self._tqm._stats.increment('changed', host.name)
-                        self._tqm.send_callback('v2_runner_on_ok', task_result)
+                        if task.action != 'include':
+                            self._tqm._stats.increment('ok', host.name)
+                            if 'changed' in task_result._result and task_result._result['changed']:
+                                self._tqm._stats.increment('changed', host.name)
+                            self._tqm.send_callback('v2_runner_on_ok', task_result)
 
                         if self._diff and 'diff' in task_result._result:
                             self._tqm.send_callback('v2_on_file_diff', task_result)
@@ -223,14 +246,15 @@ class StrategyBase:
                     ret_results.append(task_result)
 
                 elif result[0] == 'add_host':
-                    task_result = result[1]
-                    new_host_info = task_result.get('add_host', dict())
+                    result_item = result[1]
+                    new_host_info = result_item.get('add_host', dict())
 
-                    self._add_host(new_host_info)
+                    self._add_host(new_host_info, iterator)
 
                 elif result[0] == 'add_group':
-                    task        = result[1]
-                    self._add_group(task, iterator)
+                    host = result[1]
+                    result_item = result[2]
+                    self._add_group(host, result_item)
 
                 elif result[0] == 'notify_handler':
                     task_result  = result[1]
@@ -261,7 +285,7 @@ class StrategyBase:
 
                     if task.delegate_to is not None:
                         task_vars = self._variable_manager.get_vars(loader=self._loader, play=iterator._play, host=host, task=task)
-                        task_vars = self.add_tqm_variables(task_vars, play=iterator._play)
+                        self.add_tqm_variables(task_vars, play=iterator._play)
                         if item is not None:
                             task_vars['item'] = item
                         templar = Templar(loader=self._loader, variables=task_vars)
@@ -308,7 +332,7 @@ class StrategyBase:
 
         return ret_results
 
-    def _add_host(self, host_info):
+    def _add_host(self, host_info, iterator):
         '''
         Helper function to add a new host to inventory based on a task result.
         '''
@@ -326,7 +350,6 @@ class StrategyBase:
             allgroup.add_host(new_host)
 
         # Set/update the vars for this host
-        # FIXME: probably should have a set vars method for the host?
         new_vars = host_info.get('host_vars', dict())
         new_host.vars = self._inventory.get_host_vars(new_host)
         new_host.vars.update(new_vars)
@@ -350,47 +373,41 @@ class StrategyBase:
 
         # clear pattern caching completely since it's unpredictable what
         # patterns may have referenced the group
-        # FIXME: is this still required?
         self._inventory.clear_pattern_cache()
 
-    def _add_group(self, task, iterator):
+        # also clear the hostvar cache entry for the given play, so that
+        # the new hosts are available if hostvars are referenced
+        self._variable_manager.invalidate_hostvars_cache(play=iterator._play)
+
+    def _add_group(self, host, result_item):
         '''
         Helper function to add a group (if it does not exist), and to assign the
         specified host to that group.
         '''
 
+        changed = False
+
         # the host here is from the executor side, which means it was a
         # serialized/cloned copy and we'll need to look up the proper
         # host object from the master inventory
-        groups = {}
-        changed = False
+        real_host = self._inventory.get_host(host.name)
 
-        for host in self._inventory.get_hosts():
-            original_task = iterator.get_original_task(host, task)
-            all_vars = self._variable_manager.get_vars(loader=self._loader, play=iterator._play, host=host, task=original_task)
-            templar = Templar(loader=self._loader, variables=all_vars)
-            group_name = templar.template(original_task.args.get('key'))
-            if task.evaluate_conditional(templar=templar, all_vars=all_vars):
-                if group_name not in groups:
-                    groups[group_name] = []
-                groups[group_name].append(host)
+        group_name = result_item.get('add_group')
+        new_group = self._inventory.get_group(group_name)
+        if not new_group:
+            # create the new group and add it to inventory
+            new_group = Group(name=group_name)
+            self._inventory.add_group(new_group)
+            new_group.vars = self._inventory.get_group_vars(new_group)
 
-        for group_name, hosts in iteritems(groups):
-            new_group = self._inventory.get_group(group_name)
-            if not new_group:
-                # create the new group and add it to inventory
-                new_group = Group(name=group_name)
-                self._inventory.add_group(new_group)
-                new_group.vars = self._inventory.get_group_vars(new_group)
+            # and add the group to the proper hierarchy
+            allgroup = self._inventory.get_group('all')
+            allgroup.add_child_group(new_group)
+            changed = True
 
-                # and add the group to the proper hierarchy
-                allgroup = self._inventory.get_group('all')
-                allgroup.add_child_group(new_group)
-                changed = True
-            for host in hosts:
-                if group_name not in host.get_groups():
-                    new_group.add_host(host)
-                    changed = True
+        if group_name not in host.get_groups():
+            new_group.add_host(real_host)
+            changed = True
 
         return changed
 
@@ -403,7 +420,27 @@ class StrategyBase:
             data = self._loader.load_from_file(included_file._filename)
             if data is None:
                 return []
+            elif not isinstance(data, list):
+                raise AnsibleError("included task files must contain a list of tasks")
+
+            block_list = load_list_of_blocks(
+                data,
+                play=included_file._task._block._play,
+                parent_block=included_file._task._block,
+                task_include=included_file._task,
+                role=included_file._task._role,
+                use_handlers=is_handler,
+                loader=self._loader
+            )
+
+            # since we skip incrementing the stats when the task result is
+            # first processed, we do so now for each host in the list
+            for host in included_file._hosts:
+                self._tqm._stats.increment('ok', host.name)
+
         except AnsibleError as e:
+            # mark all of the hosts including this file as failed, send callbacks,
+            # and increment the stats for this host
             for host in included_file._hosts:
                 tr = TaskResult(host=host, task=included_file._task, return_data=dict(failed=True, reason=str(e)))
                 iterator.mark_host_failed(host)
@@ -411,19 +448,6 @@ class StrategyBase:
                 self._tqm._stats.increment('failures', host.name)
                 self._tqm.send_callback('v2_runner_on_failed', tr)
             return []
-
-        if not isinstance(data, list):
-            raise AnsibleParserError("included task files must contain a list of tasks", obj=included_file._task._ds)
-
-        block_list = load_list_of_blocks(
-            data,
-            play=included_file._task._block._play,
-            parent_block=included_file._task._block,
-            task_include=included_file._task,
-            role=included_file._task._role,
-            use_handlers=is_handler,
-            loader=self._loader
-        )
 
         # set the vars for this task from those specified as params to the include
         for b in block_list:
@@ -436,8 +460,21 @@ class StrategyBase:
             # then we create a temporary set of vars to ensure the variable reference is unique
             temp_vars = b._task_include.vars.copy()
             temp_vars.update(included_file._args.copy())
+            # pop tags out of the include args, if they were specified there, and assign
+            # them to the include. If the include already had tags specified, we raise an
+            # error so that users know not to specify them both ways
+            tags = temp_vars.pop('tags', [])
+            if isinstance(tags, string_types):
+                tags = [ tags ]
+            if len(tags) > 0:
+                if len(b._task_include.tags) > 0:
+                    raise AnsibleParserError("Include tasks should not specify tags in more than one way (both via args and directly on the task)", obj=included_file._task._ds)
+                self._display.deprecated("You should not specify tags in the include parameters. All tags should be specified using the task-level option")
+                b._task_include.tags = tags
             b._task_include.vars = temp_vars
 
+        # finally, send the callback and return the list of blocks loaded
+        self._tqm.send_callback('v2_playbook_on_include', included_file)
         return block_list
 
     def run_handlers(self, iterator, play_context):
@@ -487,12 +524,24 @@ class StrategyBase:
         if notified_hosts is None:
             notified_hosts = self._notified_handlers[handler_name]
 
+        run_once = False
+        try:
+            action = action_loader.get(handler.action, class_only=True)
+            if handler.run_once or getattr(action, 'BYPASS_HOST_LOOP', False):
+                run_once = True
+        except KeyError:
+            # we don't care here, because the action may simply not have a
+            # corresponding action plugin
+            pass
+
         host_results = []
         for host in notified_hosts:
             if not handler.has_triggered(host) and (host.name not in self._tqm._failed_hosts or play_context.force_handlers):
                 task_vars = self._variable_manager.get_vars(loader=self._loader, play=iterator._play, host=host, task=handler)
-                task_vars = self.add_tqm_variables(task_vars, play=iterator._play)
+                self.add_tqm_variables(task_vars, play=iterator._play)
                 self._queue_task(host, handler, task_vars, play_context)
+                if run_once:
+                    break
 
         # collect the results from the handler run
         host_results = self._wait_on_pending_results(iterator)

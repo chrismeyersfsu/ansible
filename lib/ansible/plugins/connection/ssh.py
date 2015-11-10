@@ -23,7 +23,6 @@ import fcntl
 import os
 import pipes
 import pty
-import pwd
 import select
 import shlex
 import subprocess
@@ -137,9 +136,7 @@ class Connection(ConnectionBase):
         ## Next, additional arguments based on the configuration.
 
         # sftp batch mode allows us to correctly catch failed transfers, but can
-        # be disabled if the client side doesn't support the option. FIXME: is
-        # this still a real concern?
-
+        # be disabled if the client side doesn't support the option.
         if binary == 'sftp' and C.DEFAULT_SFTP_BATCH_MODE:
             self._command += ['-b', '-']
 
@@ -190,7 +187,7 @@ class Connection(ConnectionBase):
             )
 
         user = self._play_context.remote_user
-        if user and user != pwd.getpwuid(os.geteuid())[0]:
+        if user:
             self._add_args(
                 "ANSIBLE_REMOTE_USER/remote_user/ansible_user/user/-u set",
                 ("-o", "User={0}".format(self._play_context.remote_user))

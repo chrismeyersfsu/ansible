@@ -400,7 +400,9 @@ class RequestWithMethod(urllib2.Request):
     Originally contained in library/net_infrastructure/dnsmadeeasy
     '''
 
-    def __init__(self, url, method, data=None, headers={}):
+    def __init__(self, url, method, data=None, headers=None):
+        if headers is None:
+            headers = {}
         self._method = method
         urllib2.Request.__init__(self, url, data, headers)
 
@@ -667,7 +669,7 @@ def open_url(url, data=None, headers=None, method=None, use_proxy=True,
     urllib2.install_opener(opener)
 
     if method:
-        if method.upper() not in ('OPTIONS','GET','HEAD','POST','PUT','DELETE','TRACE','CONNECT'):
+        if method.upper() not in ('OPTIONS','GET','HEAD','POST','PUT','DELETE','TRACE','CONNECT','PATCH'):
             raise ConnectionError('invalid HTTP request method; %s' % method.upper())
         request = RequestWithMethod(url, method.upper(), data)
     else:
@@ -764,6 +766,8 @@ def fetch_url(module, url, data=None, headers=None, method=None,
         distribution = get_distribution()
         if distribution.lower() == 'redhat':
             module.fail_json(msg='%s. You can also install python-ssl from EPEL' % str(e))
+        else:
+            module.fail_json(msg='%s' % str(e))
     except (ConnectionError, ValueError), e:
         module.fail_json(msg=str(e))
     except urllib2.HTTPError, e:

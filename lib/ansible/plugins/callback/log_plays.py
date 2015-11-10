@@ -15,6 +15,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+# Make coding more python3-ish
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
 import os
 import time
 import json
@@ -36,6 +40,7 @@ class CallbackModule(CallbackBase):
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = 'notification'
     CALLBACK_NAME = 'log_plays'
+    CALLBACK_NEEDS_WHITELIST = True
 
     TIME_FORMAT="%b %d %Y %H:%M:%S"
     MSG_FORMAT="%(now)s - %(category)s - %(data)s\n\n"

@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
-# FIXME: copied mostly from old code, needs py3 improvements
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
@@ -76,8 +75,18 @@ class Display:
         self._errors       = {}
 
         self.cowsay = None
-        self.noncow = os.getenv("ANSIBLE_COW_SELECTION",None)
+        self.noncow = C.ANSIBLE_COW_SELECTION
+
         self.set_cowsay_info()
+
+        if self.cowsay:
+            try:
+                cmd = subprocess.Popen([self.cowsay, "-l"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                (out, err) = cmd.communicate()
+                self.cows_available = list(set(C.ANSIBLE_COW_WHITELIST).intersection(out.split()))
+            except:
+                # could not execute cowsay for some reason
+                self.cowsay = False
 
         self._set_column_width()
 
@@ -94,13 +103,6 @@ class Display:
             elif os.path.exists("/opt/local/bin/cowsay"):
                 # MacPorts path for cowsay
                 self.cowsay = "/opt/local/bin/cowsay"
-
-            if self.cowsay and self.noncow == 'random':
-                cmd = subprocess.Popen([self.cowsay, "-l"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                (out, err) = cmd.communicate()
-                cows = out.split()
-                cows.append(False)
-                self.noncow = random.choice(cows)
 
     def display(self, msg, color=None, stderr=False, screen_only=False, log_only=False):
         """ Display a message to the user
@@ -224,7 +226,6 @@ class Display:
             except OSError:
                 self.warning("somebody cleverly deleted cowsay or something during the PB run.  heh.")
 
-        #FIXME: make this dynamic on tty size (look and ansible-doc)
         msg = msg.strip()
         star_len = (79 - len(msg))
         if star_len < 0:
@@ -239,8 +240,11 @@ class Display:
                 msg = msg[:-1]
         runcmd = [self.cowsay,"-W", "60"]
         if self.noncow:
+            thecow = self.noncow
+            if thecow == 'random':
+                thecow = random.choice(self.cows_available)
             runcmd.append('-f')
-            runcmd.append(self.noncow)
+            runcmd.append(thecow)
         runcmd.append(msg)
         cmd = subprocess.Popen(runcmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         (out, err) = cmd.communicate()
@@ -258,8 +262,8 @@ class Display:
             self._errors[new_msg] = 1
 
     @staticmethod
-    def prompt(self, msg):
-        prompt_string = to_bytes(msg, encoding=self._output_encoding())
+    def prompt(msg):
+        prompt_string = to_bytes(msg, encoding=Display._output_encoding())
         if sys.version_info >= (3,):
             # Convert back into text on python3.  We do this double conversion
             # to get rid of characters that are illegal in the user's locale

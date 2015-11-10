@@ -25,7 +25,7 @@ import os
 import signal
 import sys
 
-from six import string_types
+from ansible.compat.six import string_types
 
 from ansible import constants as C
 from ansible.executor.task_queue_manager import TaskQueueManager
@@ -33,7 +33,6 @@ from ansible.playbook import Playbook
 from ansible.template import Templar
 
 from ansible.utils.color import colorize, hostcolor
-from ansible.utils.debug import debug
 from ansible.utils.encrypt import do_encrypt
 from ansible.utils.unicode import to_unicode
 
@@ -87,6 +86,8 @@ class PlaybookExecutor:
                 for play in plays:
                     if play._included_path is not None:
                         self._loader.set_basedir(play._included_path)
+                    else:
+                        self._loader.set_basedir(pb._basedir)
 
                     # clear any filters which may have been applied to the inventory
                     self._inventory.remove_restriction()
@@ -180,7 +181,7 @@ class PlaybookExecutor:
             self.display.display("No issues encountered")
             return result
 
-        # FIXME: this stat summary stuff should be cleaned up and moved
+        # TODO: this stat summary stuff should be cleaned up and moved
         #        to a new method, if it even belongs here...
         self._display.banner("PLAY RECAP")
 

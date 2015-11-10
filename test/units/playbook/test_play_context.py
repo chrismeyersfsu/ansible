@@ -19,7 +19,6 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-import pwd
 import os
 
 from ansible.compat.tests import unittest
@@ -55,7 +54,7 @@ class TestPlayContext(unittest.TestCase):
         play_context = PlayContext(options=options)
         self.assertEqual(play_context.connection, 'smart')
         self.assertEqual(play_context.remote_addr, None)
-        self.assertEqual(play_context.remote_user, pwd.getpwuid(os.geteuid())[0])
+        self.assertEqual(play_context.remote_user, None)
         self.assertEqual(play_context.password, '')
         self.assertEqual(play_context.port, None)
         self.assertEqual(play_context.private_key_file, C.DEFAULT_PRIVATE_KEY_FILE)
@@ -140,10 +139,10 @@ class TestPlayContext(unittest.TestCase):
 
         play_context.become_method = 'sudo'
         cmd = play_context.make_become_cmd(cmd=default_cmd, executable="/bin/bash")
-        self.assertEqual(cmd, """%s -c '%s %s -n -S -u %s %s -c '"'"'echo %s; %s'"'"''""" % (default_exe, sudo_exe, sudo_flags, play_context.become_user, default_exe, play_context.success_key, default_cmd))
+        self.assertEqual(cmd, """%s -c '%s %s -u %s %s -c '"'"'echo %s; %s'"'"''""" % (default_exe, sudo_exe, sudo_flags, play_context.become_user, default_exe, play_context.success_key, default_cmd))
         play_context.become_pass = 'testpass'
         cmd = play_context.make_become_cmd(cmd=default_cmd, executable=default_exe)
-        self.assertEqual(cmd, """%s -c '%s %s -p "%s" -S -u %s %s -c '"'"'echo %s; %s'"'"''""" % (default_exe, sudo_exe, sudo_flags, play_context.prompt, play_context.become_user, default_exe, play_context.success_key, default_cmd))
+        self.assertEqual(cmd, """%s -c '%s %s -p "%s" -u %s %s -c '"'"'echo %s; %s'"'"''""" % (default_exe, sudo_exe, sudo_flags.replace('-n',''), play_context.prompt, play_context.become_user, default_exe, play_context.success_key, default_cmd))
 
         play_context.become_pass = None
 

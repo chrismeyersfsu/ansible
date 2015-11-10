@@ -27,7 +27,7 @@ import os
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 from functools import wraps
-from six import with_metaclass
+from ansible.compat.six import with_metaclass
 
 from ansible import constants as C
 from ansible.errors import AnsibleError
@@ -177,7 +177,7 @@ class ConnectionBase(with_metaclass(ABCMeta, object)):
             Setting this up is performed by the action plugin prior to running
             ``exec_command``. So we just get passed :param:`cmd` which has the
             BecomeCommand already added.  (Examples: sudo, su)
-        :Command: Is the command we're actualy trying to run remotely.
+        :Command: Is the command we're actually trying to run remotely.
             (Examples: mkdir -p $HOME/.ansible, python $HOME/.ansible/tmp-script-file)
         """
         pass

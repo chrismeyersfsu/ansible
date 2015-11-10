@@ -38,7 +38,7 @@ from ansible.utils.display import Display
 class SortedOptParser(optparse.OptionParser):
     '''Optparser which sorts the options by opt before outputting --help'''
 
-    #FIXME: epilog parsing: OptionParser.format_epilog = lambda self, formatter: self.epilog
+    # TODO: epilog parsing: OptionParser.format_epilog = lambda self, formatter: self.epilog
 
     def format_help(self, formatter=None, epilog=None):
         self.option_list.sort(key=operator.methodcaller('get_opt_string'))
@@ -107,25 +107,17 @@ class CLI(object):
                 self.display.display("No config file found; using defaults")
 
     @staticmethod
-    def ask_vault_passwords(ask_vault_pass=False, ask_new_vault_pass=False, confirm_vault=False, confirm_new=False):
+    def ask_vault_passwords(ask_new_vault_pass=False, rekey=False):
         ''' prompt for vault password and/or password change '''
 
         vault_pass = None
         new_vault_pass = None
-
         try:
-            if ask_vault_pass:
+            if rekey or not ask_new_vault_pass:
                 vault_pass = getpass.getpass(prompt="Vault password: ")
-
-            if ask_vault_pass and confirm_vault:
-                vault_pass2 = getpass.getpass(prompt="Confirm Vault password: ")
-                if vault_pass != vault_pass2:
-                    raise AnsibleError("Passwords do not match")
 
             if ask_new_vault_pass:
                 new_vault_pass = getpass.getpass(prompt="New Vault password: ")
-
-            if ask_new_vault_pass and confirm_new:
                 new_vault_pass2 = getpass.getpass(prompt="Confirm New Vault password: ")
                 if new_vault_pass != new_vault_pass2:
                     raise AnsibleError("Passwords do not match")
@@ -137,6 +129,9 @@ class CLI(object):
             vault_pass = to_bytes(vault_pass, errors='strict', nonstring='simplerepr').strip()
         if new_vault_pass:
             new_vault_pass = to_bytes(new_vault_pass, errors='strict', nonstring='simplerepr').strip()
+
+        if ask_new_vault_pass and not rekey:
+            vault_pass = new_vault_pass
 
         return vault_pass, new_vault_pass
 
@@ -223,8 +218,8 @@ class CLI(object):
         async_opts=False, connect_opts=False, subset_opts=False, check_opts=False, inventory_opts=False, epilog=None, fork_opts=False):
         ''' create an options parser for most ansible scripts '''
 
-        #FIXME: implemente epilog parsing
-        #OptionParser.format_epilog = lambda self, formatter: self.epilog
+        # TODO: implement epilog parsing
+        #       OptionParser.format_epilog = lambda self, formatter: self.epilog
 
         # base opts
         parser = SortedOptParser(usage, version=CLI.version("%prog"))
@@ -233,7 +228,7 @@ class CLI(object):
 
         if inventory_opts:
             parser.add_option('-i', '--inventory-file', dest='inventory',
-                help="specify inventory host file (default=%s)" % C.DEFAULT_HOST_LIST,
+                help="specify inventory host path (default=%s) or comma separated host list" % C.DEFAULT_HOST_LIST,
                 default=C.DEFAULT_HOST_LIST, action="callback", callback=CLI.expand_tilde, type=str)
             parser.add_option('--list-hosts', dest='listhosts', action='store_true',
                 help='outputs a list of matching hosts; does not execute anything else')
@@ -255,12 +250,10 @@ class CLI(object):
         if vault_opts:
             parser.add_option('--ask-vault-pass', default=False, dest='ask_vault_pass', action='store_true',
                 help='ask for vault password')
-            parser.add_option('--vault-password-file', default=C.DEFAULT_VAULT_PASSWORD_FILE,
-                dest='vault_password_file', help="vault password file", action="callback",
-                callback=CLI.expand_tilde, type=str)
-            parser.add_option('--new-vault-password-file',
-                dest='new_vault_password_file', help="new vault password file for rekey", action="callback",
-                callback=CLI.expand_tilde, type=str)
+            parser.add_option('--vault-password-file', default=C.DEFAULT_VAULT_PASSWORD_FILE, dest='vault_password_file',
+                help="vault password file", action="callback", callback=CLI.expand_tilde, type=str)
+            parser.add_option('--new-vault-password-file', dest='new_vault_password_file',
+                help="new vault password file for rekey", action="callback", callback=CLI.expand_tilde, type=str)
             parser.add_option('--output', default=None, dest='output_file',
                 help='output file name for encrypt or decrypt; use - for stdout')
 
@@ -353,7 +346,11 @@ class CLI(object):
         if gitinfo:
             result = result + " {0}".format(gitinfo)
         result += "\n  config file = %s" % C.CONFIG_FILE
-        result = result + "\n  configured module search path = %s" % C.DEFAULT_MODULE_PATH
+        if C.DEFAULT_MODULE_PATH is None:
+            cpath = "Default w/o overrides"
+        else:
+            cpath = C.DEFAULT_MODULE_PATH
+        result = result + "\n  configured module search path = %s" % cpath
         return result
 
     @staticmethod

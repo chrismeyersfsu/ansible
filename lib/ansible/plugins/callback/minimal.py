@@ -34,7 +34,7 @@ class CallbackModule(CallbackBase):
     CALLBACK_TYPE = 'stdout'
     CALLBACK_NAME = 'minimal'
 
-    def _command_generic_msg(self, host, result,  caption):
+    def _command_generic_msg(self, host, result, caption):
         ''' output the result of a command run '''
 
         buf = "%s | %s | rc=%s >>\n" % (host, caption, result.get('rc',0))
@@ -59,13 +59,13 @@ class CallbackModule(CallbackBase):
             del result._result['exception']
 
         if result._task.action in C.MODULE_NO_JSON:
-            self._display.display(self._command_generic_msg(result._host.get_name(), result._result,"FAILED"), color='red')
+            self._display.display(self._command_generic_msg(result._host.get_name(), result._result, "FAILED"), color='red')
         else:
             self._display.display("%s | FAILED! => %s" % (result._host.get_name(), self._dump_results(result._result, indent=4)), color='red')
 
     def v2_runner_on_ok(self, result):
         if result._task.action in C.MODULE_NO_JSON:
-            self._display.display(self._command_generic_msg(result._host.get_name(), result._result,"SUCCESS"), color='green')
+            self._display.display(self._command_generic_msg(result._host.get_name(), result._result, "SUCCESS"), color='green')
         else:
             self._display.display("%s | SUCCESS => %s" % (result._host.get_name(), self._dump_results(result._result, indent=4)), color='green')
             self._handle_warnings(result._result)

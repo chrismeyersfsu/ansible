@@ -24,7 +24,7 @@ import os
 from collections import defaultdict
 from collections import MutableMapping
 
-from six import iteritems
+from ansible.compat.six import iteritems
 from jinja2.exceptions import UndefinedError
 
 try:
@@ -34,9 +34,9 @@ except ImportError:
 
 from ansible import constants as C
 from ansible.cli import CLI
+from ansible.compat.six import string_types
 from ansible.errors import AnsibleError, AnsibleParserError, AnsibleUndefinedVariable, AnsibleFileNotFound
 from ansible.inventory.host import Host
-from ansible.parsing import DataLoader
 from ansible.plugins import lookup_loader
 from ansible.plugins.cache import FactCache
 from ansible.template import Templar
@@ -46,15 +46,15 @@ from ansible.utils.vars import combine_vars
 from ansible.vars.hostvars import HostVars
 from ansible.vars.unsafe_proxy import wrap_var
 
-VARIABLE_CACHE = dict()
-HOSTVARS_CACHE = dict()
-
 try:
     from __main__ import display
     display = display
 except ImportError:
     from ansible.utils.display import Display
     display = Display()
+
+VARIABLE_CACHE = dict()
+HOSTVARS_CACHE = dict()
 
 def preprocess_vars(a):
     '''
@@ -76,6 +76,17 @@ def preprocess_vars(a):
 
     return data
 
+def strip_internal_keys(dirty):
+    '''
+    All keys stating with _ansible_ are internal, so create a copy of the 'dirty' dict
+    and remove them from the clean one before returning it
+    '''
+    clean = dirty.copy()
+    for k in dirty.keys():
+        if isinstance(k, string_types) and k.startswith('_ansible_'):
+            del clean[k]
+    return clean
+
 class VariableManager:
 
     def __init__(self):
@@ -88,6 +99,13 @@ class VariableManager:
         self._group_vars_files = defaultdict(dict)
         self._inventory = None
         self._omit_token = '__omit_place_holder__%s' % sha1(os.urandom(64)).hexdigest()
+
+        try:
+            from __main__ import display
+            self._display = display
+        except ImportError:
+            from ansible.utils.display import Display
+            self._display = Display()
 
     def __getstate__(self):
         data = dict(
@@ -187,7 +205,7 @@ class VariableManager:
             debug("vars are cached, returning them now")
             return VARIABLE_CACHE[cache_entry]
 
-        all_vars = defaultdict(dict)
+        all_vars = dict()
         magic_variables = self._get_magic_variables(
             loader=loader,
             play=play,
@@ -261,7 +279,6 @@ class VariableManager:
                 # we assume each item in the list is itself a list, as we
                 # support "conditional includes" for vars_files, which mimics
                 # the with_first_found mechanism.
-                #vars_file_list = templar.template(vars_file_item)
                 vars_file_list = vars_file_item
                 if not isinstance(vars_file_list, list):
                      vars_file_list = [ vars_file_list ]
@@ -291,7 +308,7 @@ class VariableManager:
                     else:
                         # we do not have a full context here, and the missing variable could be
                         # because of that, so just show a warning and continue
-                        display.vvv("skipping vars_file '%s' due to an undefined variable" % vars_file_item)
+                        self._display.vvv("skipping vars_file '%s' due to an undefined variable" % vars_file_item)
                         continue
 
             if not C.DEFAULT_PRIVATE_ROLE_VARS:
@@ -310,6 +327,14 @@ class VariableManager:
         all_vars = combine_vars(all_vars, self._extra_vars)
         all_vars = combine_vars(all_vars, magic_variables)
 
+        # special case for the 'environment' magic variable, as someone
+        # may have set it as a variable and we don't want to stomp on it
+        if task:
+            if  'environment' not in all_vars:
+                all_vars['environment'] = task.environment
+            else:
+                display.warning("The variable 'environment' appears to be used already, which is also used internally for environment variables set on the task/block/play. You should use a different variable name to avoid conflicts with this internal variable")
+
         # if we have a task and we're delegating to another host, figure out the
         # variables for that host now so we don't have to rely on hostvars later
         if task and task.delegate_to is not None and include_delegate_to:
@@ -319,6 +344,11 @@ class VariableManager:
 
         debug("done with get_vars()")
         return all_vars
+
+    def invalidate_hostvars_cache(self, play):
+        hostvars_cache_entry = self._get_cache_entry(play=play)
+        if hostvars_cache_entry in HOSTVARS_CACHE:
+            del HOSTVARS_CACHE[hostvars_cache_entry]
 
     def _get_magic_variables(self, loader, play, host, task, include_hostvars, include_delegate_to):
         '''
@@ -330,7 +360,7 @@ class VariableManager:
         variables['playbook_dir'] = loader.get_basedir()
 
         if host:
-            variables['group_names'] = [group.name for group in host.get_groups()]
+            variables['group_names'] = [group.name for group in host.get_groups() if group.name != 'all']
 
             if self._inventory is not None:
                 variables['groups']  = dict()
@@ -346,6 +376,9 @@ class VariableManager:
                         HOSTVARS_CACHE[hostvars_cache_entry] = hostvars
                     variables['hostvars'] = hostvars
                     variables['vars'] = hostvars[host.get_name()]
+
+        if play:
+            variables['role_names'] = [r._role_name for r in play.roles]
 
         if task:
             if task._role:

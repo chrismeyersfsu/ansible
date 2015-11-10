@@ -93,6 +93,35 @@ And you want to print every user's name and phone number.  You can loop through 
 
 .. _looping_over_fileglobs:
 
+Looping over Files
+``````````````````
+
+``with_file`` iterates over a list of files, setting `item` to the content of each file in sequence.  It can be used like this::
+
+    ---
+    - hosts: all
+
+      tasks:
+
+        # emit a debug message containing the content of each file.
+        - debug:
+            msg: "{{item}}"
+          with_file:
+            - first_example_file
+            - second_example_file
+
+Assuming that ``first_example_file`` contained the text "hello" and ``second_example_file`` contained the text "world", this would result in::
+
+    TASK [debug msg={{item}}] ******************************************************
+    ok: [localhost] => (item=hello) => {
+        "item": "hello", 
+        "msg": "hello"
+    }
+    ok: [localhost] => (item=world) => {
+        "item": "world", 
+        "msg": "world"
+    }
+
 Looping over Fileglobs
 ``````````````````````
 
@@ -484,6 +513,36 @@ Subsequent loops over the registered variable to inspect the results may look li
         msg: "The command ({{ item.cmd }}) did not have a 0 return code"
       when: item.rc != 0
       with_items: "{{echo.results}}"
+
+
+
+.. _loops_and_includes:
+
+Loops and Includes
+
+``````````````````
+
+In 2.0 you are able to use `with_` loops and task includes (but not playbook includes), this adds the ability to loop over the set of tasks in one shot.
+There are a couple of things that you need to keep in mind, a included task that has it's own `with_` loop will overwrite the value of the special `item` variable.
+So if you want access to both the include's `item` and the current task's `item` you should use `set_fact` to create a alias to the outer one.::
+
+
+    - include: test.yml
+      with_items:
+        - 1
+        - 2
+        - 3
+
+in test.yml::
+
+    - set_fact: outer_loop="{{item}}"
+
+    - debug: msg="outer item={{outer_loop}} inner item={{item}}"
+      with_items:
+        - a
+        - b
+        - c
+
 
 .. _writing_your_own_iterators:
 

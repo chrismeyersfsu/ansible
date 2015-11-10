@@ -19,7 +19,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from six import iteritems, string_types
+from ansible.compat.six import iteritems, string_types
 
 from ansible.errors import AnsibleError
 
@@ -68,7 +68,6 @@ class Task(Base, Conditional, Taggable, Become):
     _args                 = FieldAttribute(isa='dict', default=dict())
     _action               = FieldAttribute(isa='string')
 
-    _always_run           = FieldAttribute(isa='bool')
     _any_errors_fatal     = FieldAttribute(isa='bool')
     _async                = FieldAttribute(isa='int', default=0)
     _changed_when         = FieldAttribute(isa='string')
@@ -76,17 +75,14 @@ class Task(Base, Conditional, Taggable, Become):
     _delegate_to          = FieldAttribute(isa='string')
     _failed_when          = FieldAttribute(isa='string')
     _first_available_file = FieldAttribute(isa='list')
-    _ignore_errors        = FieldAttribute(isa='bool')
     _loop                 = FieldAttribute(isa='string', private=True)
     _loop_args            = FieldAttribute(isa='list', private=True)
-    _local_action         = FieldAttribute(isa='string')
     _name                 = FieldAttribute(isa='string', default='')
     _notify               = FieldAttribute(isa='list')
     _poll                 = FieldAttribute(isa='int')
     _register             = FieldAttribute(isa='string')
-    _retries              = FieldAttribute(isa='int', default=1)
-    _run_once             = FieldAttribute(isa='bool')
-    _until                = FieldAttribute(isa='list') # ?
+    _retries              = FieldAttribute(isa='int', default=3)
+    _until                = FieldAttribute(isa='list')
 
     def __init__(self, block=None, role=None, task_include=None):
         ''' constructors a task, without the Task.load classmethod, it will be pretty blank '''
@@ -171,6 +167,15 @@ class Task(Base, Conditional, Taggable, Become):
         # supported as legacy
         args_parser = ModuleArgsParser(task_ds=ds)
         (action, args, delegate_to) = args_parser.parse()
+
+        # the command/shell/script modules used to support the `cmd` arg,
+        # which corresponds to what we now call _raw_params, so move that
+        # value over to _raw_params (assuming it is empty)
+        if action in ('command', 'shell', 'script'):
+            if 'cmd' in args:
+                if args.get('_raw_params', '') != '':
+                    raise AnsibleError("The 'cmd' argument cannot be used when other raw parameters are specified. Please put everything in one or the other place.", obj=ds)
+                args['_raw_params'] = args.pop('cmd')
 
         new_ds['action']      = action
         new_ds['args']        = args
@@ -378,8 +383,8 @@ class Task(Base, Conditional, Taggable, Become):
         Override for the 'tags' getattr fetcher, used from Base.
         '''
         environment = self._attributes['environment']
-        if environment is None:
-            environment = self._get_parent_attribute('environment')
-
+        parent_environment = self._get_parent_attribute('environment', extend=True)
+        if parent_environment is not None:
+            environment = self._extend_value(environment, parent_environment)
         return environment
 

@@ -50,47 +50,47 @@
 # http://code.activestate.com/recipes/496741-object-proxying/
 # Author: Tomer Filiba
 
-__all__ = ['UnsafeProxy', 'AnsibleUnsafe', 'wrap_var']
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
 
+import json
+
+from ansible.utils.unicode import to_unicode
+from ansible.compat.six import string_types, text_type
+
+__all__ = ['UnsafeProxy', 'AnsibleUnsafe', 'AnsibleJSONUnsafeEncoder', 'AnsibleJSONUnsafeDecoder', 'wrap_var']
 
 class AnsibleUnsafe(object):
     __UNSAFE__ = True
 
-try:
-    unicode
-except NameError:
-    # Python 3
-    class AnsibleUnsafeBytes(bytes, AnsibleUnsafe):
-        pass
+class AnsibleUnsafeText(text_type, AnsibleUnsafe):
+    pass
 
-    class AnsibleUnsafeStr(str, AnsibleUnsafe):
-        pass
+class UnsafeProxy(object):
+    def __new__(cls, obj, *args, **kwargs):
+        # In our usage we should only receive unicode strings.
+        # This conditional and conversion exists to sanity check the values
+        # we're given but we may want to take it out for testing and sanitize
+        # our input instead.
+        if isinstance(obj, string_types):
+            obj = to_unicode(obj, errors='strict')
+            return AnsibleUnsafeText(obj)
+        return obj
 
-    class UnsafeProxy(object):
-        def __new__(cls, obj, *args, **kwargs):
-            if obj.__class__ == str:
-                return AnsibleUnsafeStr(obj)
-            elif obj.__class__ == bytes:
-                return AnsibleUnsafeBytes(obj)
-            else:
-                return obj
-else:
-    # Python 2
-    class AnsibleUnsafeStr(str, AnsibleUnsafe):
-        pass
+class AnsibleJSONUnsafeEncoder(json.JSONEncoder):
+    def encode(self, obj):
+        if isinstance(obj, AnsibleUnsafe):
+            return super(AnsibleJSONUnsafeEncoder, self).encode(dict(__ansible_unsafe=True, value=unicode(obj)))
+        else:
+            return super(AnsibleJSONUnsafeEncoder, self).encode(obj)
 
-    class AnsibleUnsafeUnicode(unicode, AnsibleUnsafe):
-        pass
-
-    class UnsafeProxy(object):
-        def __new__(cls, obj, *args, **kwargs):
-            if obj.__class__ == unicode:
-                return AnsibleUnsafeUnicode(obj)
-            elif obj.__class__ == str:
-                return AnsibleUnsafeStr(obj)
-            else:
-                return obj
-
+class AnsibleJSONUnsafeDecoder(json.JSONDecoder):
+    def decode(self, obj):
+        value = super(AnsibleJSONUnsafeDecoder, self).decode(obj)
+        if isinstance(value, dict) and '__ansible_unsafe' in value:
+            return UnsafeProxy(value.get('value', ''))
+        else:
+            return value
 
 def _wrap_dict(v):
     for k in v.keys():

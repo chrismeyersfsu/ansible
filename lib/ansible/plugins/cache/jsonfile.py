@@ -15,6 +15,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+# Make coding more python3-ish
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
 import os
 import time
 import errno
@@ -26,7 +30,7 @@ except ImportError:
     import json
 
 from ansible import constants as C
-from ansible.errors import *
+from ansible.errors import AnsibleError
 from ansible.parsing.utils.jsonify import jsonify
 from ansible.plugins.cache.base import BaseCacheModule
 from ansible.utils.unicode import to_bytes
@@ -53,29 +57,26 @@ class CacheModule(BaseCacheModule):
 
     def get(self, key):
 
+        if self.has_expired(key) or key == "":
+           raise KeyError
+
         if key in self._cache:
             return self._cache.get(key)
 
-        if self.has_expired(key):
-           raise KeyError
-
         cachefile = "%s/%s" % (self._cache_dir, key)
         try:
-            f = codecs.open(cachefile, 'r', encoding='utf-8')
+            with codecs.open(cachefile, 'r', encoding='utf-8') as f:
+                try:
+                    value = json.load(f)
+                    self._cache[key] = value
+                    return value
+                except ValueError as e:
+                    self._display.warning("error while trying to read %s : %s. Most likely a corrupt file, so erasing and failing." % (cachefile, to_bytes(e)))
+                    self.delete(key)
+                    raise AnsibleError("The JSON cache file %s was corrupt, or did not otherwise contain valid JSON data. It has been removed, so you can re-run your command now." % cachefile)
         except (OSError,IOError) as e:
             self._display.warning("error while trying to read %s : %s" % (cachefile, to_bytes(e)))
-            pass
-        else:
-            try:
-                value = json.load(f)
-                self._cache[key] = value
-                return value
-            except ValueError as e:
-                self._display.warning("error while trying to read %s : %s. Most likely a corrupt file, so erasing and failing." % (cachefile, to_bytes(e)))
-                self.delete(key)
-                raise AnsibleError("The JSON cache file %s was corrupt, or did not otherwise contain valid JSON data. It has been removed, so you can re-run your command now." % cachefile)
-        finally:
-            f.close()
+            raise KeyError
 
     def set(self, key, value):
 
@@ -143,7 +144,7 @@ class CacheModule(BaseCacheModule):
             pass
         try:
             os.remove("%s/%s" % (self._cache_dir, key))
-        except (OSError,IOError) as e:
+        except (OSError, IOError):
             pass #TODO: only pass on non existing?
 
     def flush(self):

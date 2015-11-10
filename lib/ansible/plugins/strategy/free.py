@@ -21,7 +21,7 @@ __metaclass__ = type
 
 import time
 
-from ansible.errors import *
+from ansible.errors import AnsibleError
 from ansible.playbook.included_file import IncludedFile
 from ansible.plugins.strategy import StrategyBase
 
@@ -104,16 +104,11 @@ class StrategyModule(StrategyBase):
                                 self._display.debug("'%s' skipped because role has already run" % task)
                                 continue
 
-                        if not task.evaluate_tags(play_context.only_tags, play_context.skip_tags, task_vars) and task.action != 'setup':
-                            self._display.debug("'%s' failed tag evaluation" % task)
-                            continue
-
                         if task.action == 'meta':
                             # meta tasks store their args in the _raw_params field of args,
                             # since they do not use k=v pairs, so get that
                             meta_action = task.args.get('_raw_params')
                             if meta_action == 'noop':
-                                # FIXME: issue a callback for the noop here?
                                 continue
                             elif meta_action == 'flush_handlers':
                                 # FIXME: in the 'free' mode, flushing handlers should result in
@@ -174,8 +169,6 @@ class StrategyModule(StrategyBase):
             results = self._wait_on_pending_results(iterator)
             host_results.extend(results)
         except Exception as e:
-            # FIXME: ctrl+c can cause some failures here, so catch them
-            #        with the appropriate error type
             pass
 
         # run the base class run() method, which executes the cleanup function

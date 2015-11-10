@@ -16,16 +16,16 @@
 # ansible-vault is a script that encrypts/decrypts YAML files. See
 # http://docs.ansible.com/playbooks_vault.html for more details.
 
+from __future__ import (absolute_import, division, print_function)
+__metaclass__ = type
+
 import os
 import sys
-import traceback
 
-from ansible import constants as C
 from ansible.errors import AnsibleError, AnsibleOptionsError
-from ansible.parsing import DataLoader
+from ansible.parsing.dataloader import DataLoader
 from ansible.parsing.vault import VaultEditor
 from ansible.cli import CLI
-from ansible.utils.display import Display
 
 class VaultCLI(CLI):
     """ Vault command line class """
@@ -86,11 +86,19 @@ class VaultCLI(CLI):
         super(VaultCLI, self).run()
         loader = DataLoader()
 
+        # set default restrictive umask
+        old_umask = os.umask(0o077)
+
         if self.options.vault_password_file:
             # read vault_pass from a file
             self.vault_pass = CLI.read_vault_password_file(self.options.vault_password_file, loader)
         else:
-            self.vault_pass, _= self.ask_vault_passwords(ask_vault_pass=True, ask_new_vault_pass=False, confirm_new=False)
+            newpass = False
+            rekey = False
+            if not self.options.new_vault_password_file:
+                newpass = (self.action in ['create', 'rekey', 'encrypt'])
+                rekey = (self.action == 'rekey')
+            self.vault_pass, self.new_vault_pass = self.ask_vault_passwords(ask_new_vault_pass=newpass, rekey=rekey)
 
         if self.options.new_vault_password_file:
             # for rekey only
@@ -102,6 +110,9 @@ class VaultCLI(CLI):
         self.editor = VaultEditor(self.vault_pass)
 
         self.execute()
+
+        # and restore umask
+        os.umask(old_umask)
 
     def execute_encrypt(self):
 
@@ -146,12 +157,7 @@ class VaultCLI(CLI):
             if not (os.path.isfile(f)):
                 raise AnsibleError(f + " does not exist")
 
-        if self.new_vault_pass:
-            new_password = self.new_vault_pass
-        else:
-            __, new_password = self.ask_vault_passwords(ask_vault_pass=False, ask_new_vault_pass=True, confirm_new=True)
-
         for f in self.args:
-            self.editor.rekey_file(f, new_password)
+            self.editor.rekey_file(f, self.new_vault_pass)
 
         self.display.display("Rekey successful", stderr=True)

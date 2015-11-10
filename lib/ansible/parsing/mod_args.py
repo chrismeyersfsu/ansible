@@ -19,7 +19,7 @@
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
-from six import iteritems, string_types
+from ansible.compat.six import iteritems, string_types
 
 from ansible.errors import AnsibleParserError
 from ansible.plugins import module_loader
@@ -243,7 +243,6 @@ class ModuleArgsParser:
         # this is the 'extra gross' scenario detailed above, so we grab
         # the args and pass them in as additional arguments, which can/will
         # be overwritten via dict updates from the other arg sources below
-        # FIXME: add test cases for this
         additional_args = self._task_ds.get('args', dict())
 
         # We can have one of action, local_action, or module specified
