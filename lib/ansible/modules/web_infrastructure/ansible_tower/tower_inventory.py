@@ -36,7 +36,7 @@ options:
       required: True
     variables:
       description:
-        - Inventory variables. Use C(@) to get from file.
+        - Inventory variables. Use C({{ lookup('file', 'vars.yml') }}) to get from file.
     kind:
       description:
         - The kind field. Cannot be modified after created.
@@ -98,6 +98,12 @@ def main():
     state = module.params.get('state')
     kind = module.params.get('kind')
     host_filter = module.params.get('host_filter')
+
+    if variables:
+        if variables.startswith('@'):
+            filename = os.path.expanduser(variables[1:])
+            with open(filename, 'r') as f:
+                variables = f.read()
 
     json_output = {'inventory': name, 'state': state}
 
